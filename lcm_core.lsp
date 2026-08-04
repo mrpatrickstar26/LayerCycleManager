@@ -2,6 +2,7 @@
 ;;; Layer Cycle Manager
 ;;; File: lcm_core.lsp
 ;;; Stage 3: arrow drawing core
+;;; Fixed: STRINGP, 2D distance, rounding, error handling
 ;;; ============================================================
 
 (vl-load-com)
@@ -26,6 +27,35 @@
       (float (car pt))
       (float (cadr pt))
       0.0
+    )
+  )
+)
+
+
+;;; ------------------------------------------------------------
+;;; AutoLISP does not have stringp by default
+;;; Use type check instead
+;;; ------------------------------------------------------------
+
+(defun lcm:is-string (x)
+  (and x (eq (type x) 'STR))
+)
+
+
+;;; ------------------------------------------------------------
+;;; 2D distance between two points
+;;; Ignores Z coordinate like original Python script
+;;; ------------------------------------------------------------
+
+(defun lcm:distance-2d (p1 p2)
+  (distance
+    (list
+      (float (car p1))
+      (float (cadr p1))
+    )
+    (list
+      (float (car p2))
+      (float (cadr p2))
     )
   )
 )
@@ -69,18 +99,25 @@
     color-mode
     color-data
     /
-    mode tc
+    mode tc r g b
   )
 
   (if obj
     (progn
 
+      ;; Assign layer
       (vl-catch-all-apply
         'vla-put-Layer
         (list obj layer-name)
       )
 
+      ;; Default color mode
       (if (not color-mode)
+        (setq color-mode "ACI")
+      )
+
+      ;; color-mode must be string
+      (if (not (lcm:is-string color-mode))
         (setq color-mode "ACI")
       )
 
@@ -106,10 +143,12 @@
 
         ((= mode "ACI")
 
-         (if (stringp color-data)
+         ;; If color-data is string, convert to integer
+         (if (lcm:is-string color-data)
            (setq color-data (atoi color-data))
          )
 
+         ;; Validate ACI
          (if (or
                (not (numberp color-data))
                (< color-data 1)
@@ -136,28 +175,62 @@
                (>= (length color-data) 3)
              )
            (progn
-             (setq tc
-               (vl-catch-all-apply
-                 'vla-get-TrueColor
-                 (list obj)
-               )
+
+             (setq r (car color-data))
+             (setq g (cadr color-data))
+             (setq b (caddr color-data))
+
+             ;; Convert strings if needed
+             (if (lcm:is-string r)
+               (setq r (atoi r))
              )
 
-             (if (not (vl-catch-all-error-p tc))
+             (if (lcm:is-string g)
+               (setq g (atoi g))
+             )
+
+             (if (lcm:is-string b)
+               (setq b (atoi b))
+             )
+
+             ;; Validate numbers
+             (if (and
+                   (numberp r)
+                   (numberp g)
+                   (numberp b)
+                 )
                (progn
-                 (vl-catch-all-apply
-                   'vla-SetRGB
-                   (list
-                     tc
-                     (car color-data)
-                     (cadr color-data)
-                     (caddr color-data)
+
+                 ;; Clamp RGB
+                 (if (< r 0) (setq r 0))
+                 (if (> r 255) (setq r 255))
+
+                 (if (< g 0) (setq g 0))
+                 (if (> g 255) (setq g 255))
+
+                 (if (< b 0) (setq b 0))
+                 (if (> b 255) (setq b 255))
+
+                 (setq tc
+                   (vl-catch-all-apply
+                     'vla-get-TrueColor
+                     (list obj)
                    )
                  )
 
-                 (vl-catch-all-apply
-                   'vla-put-TrueColor
-                   (list obj tc)
+                 (if (not (vl-catch-all-error-p tc))
+                   (progn
+
+                     (vl-catch-all-apply
+                       'vla-SetRGB
+                       (list tc r g b)
+                     )
+
+                     (vl-catch-all-apply
+                       'vla-put-TrueColor
+                       (list obj tc)
+                     )
+                   )
                  )
                )
              )
@@ -175,13 +248,6 @@
 ;;; ------------------------------------------------------------
 ;;; Draw one arrow
 ;;; ------------------------------------------------------------
-;;; start-point, end-point: (x y) or (x y z)
-;;; layer-name: target layer
-;;; color-mode: "BYLAYER", "ACI", "RGB"
-;;; color-data: ACI integer or RGB list (r g b)
-;;; text-height: text height
-;;; scale: arrow length multiplier
-;;; ------------------------------------------------------------
 
 (defun lcm:draw-arrow
   (
@@ -194,11 +260,13 @@
     scale
     /
     acad doc ms
+    x1 y1 x2 y2
     dx dy length
     x3 y3 tip ang wing-len
     w1 w2
     line solid txt
     dist-mm
+    prop-result
   )
 
   ;; Default values
@@ -218,6 +286,19 @@
     (setq color-data 1)
   )
 
+  ;; If RGB mode is requested but no RGB list is provided,
+  ;; fallback to red ACI.
+  (if (and
+        (lcm:is-string color-mode)
+        (= (strcase color-mode) "RGB")
+        (not (listp color-data))
+      )
+    (progn
+      (setq color-mode "ACI")
+      (setq color-data 1)
+    )
+  )
+
   (if (or
         (not start-point)
         (not end-point)
@@ -227,17 +308,18 @@
     nil
     (progn
 
-      (setq dx
-        (- (car end-point) (car start-point))
-      )
+      ;; Get only X/Y coordinates
+      (setq x1 (float (car start-point)))
+      (setq y1 (float (cadr start-point)))
 
-      (setq dy
-        (- (cadr end-point) (cadr start-point))
-      )
+      (setq x2 (float (car end-point)))
+      (setq y2 (float (cadr end-point)))
 
-      (setq length
-        (distance start-point end-point)
-      )
+      (setq dx (- x2 x1))
+      (setq dy (- y2 y1))
+
+      ;; 2D length only, like Python math.hypot(dx, dy)
+      (setq length (sqrt (+ (* dx dx) (* dy dy))))
 
       (if (zerop length)
         nil
@@ -246,24 +328,15 @@
           (lcm:ensure-layer layer-name)
 
           ;; Arrow tip with scale
-          (setq x3
-            (+ (car start-point) (* dx scale))
-          )
-
-          (setq y3
-            (+ (cadr start-point) (* dy scale))
-          )
+          (setq x3 (+ x1 (* dx scale)))
+          (setq y3 (+ y1 (* dy scale)))
 
           (setq tip (list x3 y3))
 
-          (setq ang
-            (angle start-point tip)
-          )
+          (setq ang (angle (list x1 y1) tip))
 
           ;; Arrow wing length = 0.2 * original length * scale
-          (setq wing-len
-            (* 0.2 length scale)
-          )
+          (setq wing-len (* 0.2 length scale))
 
           ;; Wing points
           (setq w1
@@ -296,7 +369,7 @@
               'vla-AddLine
               (list
                 ms
-                (lcm:pt3 start-point)
+                (lcm:pt3 (list x1 y1))
                 (lcm:pt3 tip)
               )
             )
@@ -332,10 +405,11 @@
           ;; ------------------------------------------------------------
           ;; Distance text in millimeters
           ;; Drawing units are assumed to be meters
+          ;; Mathematical rounding for positive values
           ;; ------------------------------------------------------------
 
           (setq dist-mm
-            (fix (+ (* length 1000.0) 0.5))
+            (fix (+ (* length 1000.0) 0.5 1e-8))
           )
 
           (setq txt
@@ -357,15 +431,32 @@
 
           ;; ------------------------------------------------------------
           ;; Apply properties
+          ;; Use catch so one object error does not stop others
           ;; ------------------------------------------------------------
 
           (foreach ent (list line solid txt)
             (if ent
-              (lcm:set-object-properties
-                ent
-                layer-name
-                color-mode
-                color-data
+              (progn
+                (setq prop-result
+                  (vl-catch-all-apply
+                    'lcm:set-object-properties
+                    (list
+                      ent
+                      layer-name
+                      color-mode
+                      color-data
+                    )
+                  )
+                )
+
+                (if (vl-catch-all-error-p prop-result)
+                  (prompt
+                    (strcat
+                      "\nLCM WARNING: property assignment error: "
+                      (vl-catch-all-error-message prop-result)
+                    )
+                  )
+                )
               )
             )
           )
@@ -402,7 +493,7 @@
     count errors
     from-name to-name
     start-pt end-pt
-    result
+    result err-msg
   )
 
   (setq acad (vlax-get-acad-object))
@@ -469,40 +560,73 @@
         (if (and start-pt end-pt)
           (progn
 
+            ;; Catch error for each arrow separately
             (setq result
-              (lcm:draw-arrow
-                start-pt
-                end-pt
-                layer-last
-                color-mode
-                color-data
-                text-height
-                scale
+              (vl-catch-all-apply
+                'lcm:draw-arrow
+                (list
+                  start-pt
+                  end-pt
+                  layer-last
+                  color-mode
+                  color-data
+                  text-height
+                  scale
+                )
               )
             )
 
-            (if result
+            (if (vl-catch-all-error-p result)
               (progn
-                (setq count (1+ count))
+                (setq errors (1+ errors))
+
+                (setq err-msg
+                  (vl-catch-all-error-message result)
+                )
 
                 (prompt
                   (strcat
-                    "\nLCM: arrow "
+                    "\nLCM ERROR: arrow "
                     from-name
                     " -> "
                     to-name
                   )
                 )
+
+                (if err-msg
+                  (prompt
+                    (strcat
+                      " | "
+                      err-msg
+                    )
+                  )
+                )
               )
               (progn
-                (setq errors (1+ errors))
+                (if result
+                  (progn
+                    (setq count (1+ count))
 
-                (prompt
-                  (strcat
-                    "\nLCM ERROR: cannot draw arrow "
-                    from-name
-                    " -> "
-                    to-name
+                    (prompt
+                      (strcat
+                        "\nLCM: arrow "
+                        from-name
+                        " -> "
+                        to-name
+                      )
+                    )
+                  )
+                  (progn
+                    (setq errors (1+ errors))
+
+                    (prompt
+                      (strcat
+                        "\nLCM ERROR: cannot draw arrow "
+                        from-name
+                        " -> "
+                        to-name
+                      )
+                    )
                   )
                 )
               )
@@ -548,57 +672,10 @@
 
 
 ;;; ------------------------------------------------------------
-;;; Test command: list points from layer
-;;; ------------------------------------------------------------
-
-(defun C:LCMTESTDATA (/ layer-name pts)
-
-  (setq layer-name
-    (getstring T "\nLCM test: layer name to list points: ")
-  )
-
-  (if (/= layer-name "")
-    (progn
-
-      (setq pts
-        (lcm:get-points-with-names layer-name)
-      )
-
-      (prompt
-        (strcat
-          "\nLCM: found "
-          (itoa (length pts))
-          " points on layer '"
-          layer-name
-          "'"
-        )
-      )
-
-      (foreach item pts
-        (prompt
-          (strcat
-            "\n"
-            (car item)
-            "  X="
-            (rtos (cadr item) 2 3)
-            "  Y="
-            (rtos (caddr item) 2 3)
-          )
-        )
-      )
-    )
-    (prompt "\nLCM: empty layer name.")
-  )
-
-  (princ)
-)
-
-
-;;; ------------------------------------------------------------
 ;;; Test command: draw one test arrow manually
 ;;; ------------------------------------------------------------
 
-(defun C:LCMTESTDRAW (/ p1 p2 layer-name scale)
+(defun C:LCMTESTDRAW (/ p1 p2 layer-name scale arrow)
 
   (setq p1
     (getpoint "\nLCM test: start point: ")
@@ -630,17 +707,22 @@
             (setq scale 5.0)
           )
 
-          (lcm:draw-arrow
-            p1
-            p2
-            layer-name
-            "ACI"
-            1
-            2.5
-            scale
+          (setq arrow
+            (lcm:draw-arrow
+              p1
+              p2
+              layer-name
+              "ACI"
+              1
+              2.5
+              scale
+            )
           )
 
-          (prompt "\nLCM: test arrow created.")
+          (if arrow
+            (prompt "\nLCM: test arrow created.")
+            (prompt "\nLCM ERROR: test arrow was not created.")
+          )
         )
         (prompt "\nLCM: end point not selected.")
       )
