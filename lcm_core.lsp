@@ -111,9 +111,9 @@
         (list obj layer-name)
       )
 
-      ;; Default color mode
+      ;; Default color mode: ByLayer
       (if (not color-mode)
-        (setq color-mode "ACI")
+        (setq color-mode "BYLAYER")
       )
 
       ;; color-mode must be string
@@ -278,13 +278,12 @@
     (setq text-height 2.5)
   )
 
+  ;; Default color is ByLayer
   (if (not color-mode)
-    (setq color-mode "ACI")
+    (setq color-mode "BYLAYER")
   )
 
-  (if (not color-data)
-    (setq color-data 1)
-  )
+  ;; color-data may be nil for ByLayer
 
   ;; If RGB mode is requested but no RGB list is provided,
   ;; fallback to red ACI.
@@ -712,8 +711,8 @@
               p1
               p2
               layer-name
-              "ACI"
-              1
+              "BYLAYER"
+              nil
               2.5
               scale
             )
@@ -798,8 +797,8 @@
         layer-last
         mappings
         scale
-        "ACI"
-        1
+        "BYLAYER"
+        nil
         2.5
       )
     )
