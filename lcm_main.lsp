@@ -161,5 +161,8 @@
 
 (lcm:load-modules)
 
+;;; Flag that main module is loaded
+(setq lcm:loaded T)
+
 ;;; Suppress return value in command line
 (princ)
