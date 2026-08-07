@@ -1,7 +1,7 @@
 ;;; ============================================================
 ;;; Layer Cycle Manager
 ;;; File: lcm_ui.lsp
-;;; Stage 4: DCL interface logic
+;;; Stage 6: DCL interface logic with settings restore
 ;;; ============================================================
 
 (vl-load-com)
@@ -330,7 +330,6 @@
         )
       )
 
-      ;; If this source point already has a mapping, replace it
       (setq lcm:maps
         (vl-remove-if
           (function
@@ -535,10 +534,6 @@
   (add_list "RGB")
   (end_list)
 
-  (set_tile "color_mode" "0")
-
-  (lcm:ui-update-color-mode)
-
   (princ)
 )
 
@@ -630,6 +625,76 @@
   )
 
   out
+)
+
+
+;;; ------------------------------------------------------------
+;;; Convert number to clean string
+;;; ------------------------------------------------------------
+
+(defun lcm:num->str (n)
+  (if (= n (fix n))
+    (itoa (fix n))
+    (rtos n 2 3)
+  )
+)
+
+
+;;; ------------------------------------------------------------
+;;; Apply saved settings to dialog tiles
+;;; ------------------------------------------------------------
+
+(defun lcm:ui-apply-settings (/ rgb mode)
+
+  ;; Restore last layers
+  (lcm:ui-select-item
+    "layer_zero"
+    lcm:layers
+    (lcm:config-get "LAYER_ZERO")
+  )
+
+  (lcm:ui-select-item
+    "layer_last"
+    lcm:layers
+    (lcm:config-get "LAYER_LAST")
+  )
+
+  ;; Restore parameters
+  (set_tile "scale"
+    (lcm:num->str (lcm:config-get "SCALE"))
+  )
+
+  (set_tile "text_height"
+    (lcm:num->str (lcm:config-get "TEXT_HEIGHT"))
+  )
+
+  (set_tile "aci"
+    (itoa (lcm:config-get "ACI"))
+  )
+
+  ;; Restore RGB
+  (setq rgb (lcm:config-get "RGB"))
+
+  (if (and (listp rgb) (>= (length rgb) 3))
+    (progn
+      (set_tile "rgb_r" (itoa (nth 0 rgb)))
+      (set_tile "rgb_g" (itoa (nth 1 rgb)))
+      (set_tile "rgb_b" (itoa (nth 2 rgb)))
+    )
+  )
+
+  ;; Restore color mode
+  (setq mode (lcm:config-get "COLOR_MODE"))
+
+  (if (or (not mode) (< mode 0) (> mode 2))
+    (setq mode 0)
+  )
+
+  (set_tile "color_mode" (itoa mode))
+
+  (lcm:ui-update-color-mode)
+
+  (princ)
 )
 
 
@@ -754,6 +819,23 @@
   (setq lcm:run-text-height text-height)
   (setq lcm:run-mappings valid)
 
+  ;; Save settings for next run
+  (lcm:config-set "LAYER_ZERO" layer-zero)
+  (lcm:config-set "LAYER_LAST" layer-last)
+  (lcm:config-set "SCALE" scale)
+  (lcm:config-set "TEXT_HEIGHT" text-height)
+  (lcm:config-set "COLOR_MODE" mode)
+
+  (if (= mode 1)
+    (lcm:config-set "ACI" color-data)
+  )
+
+  (if (= mode 2)
+    (lcm:config-set "RGB" color-data)
+  )
+
+  (lcm:config-save)
+
   (done_dialog 1)
 )
 
@@ -807,18 +889,14 @@
     )
   )
 
-  ;; Default values
-  (set_tile "scale" "5.0")
-  (set_tile "text_height" "2.5")
-  (set_tile "aci" "1")
-  (set_tile "rgb_r" "255")
-  (set_tile "rgb_g" "0")
-  (set_tile "rgb_b" "0")
+  ;; Load saved settings
+  (lcm:config-load)
 
   ;; Fill interface
   (lcm:ui-fill-layers)
-  (lcm:ui-refresh-points)
   (lcm:ui-fill-color-mode)
+  (lcm:ui-apply-settings)
+  (lcm:ui-refresh-points)
 
   ;; Actions
   (action_tile "layer_zero" "(lcm:ui-refresh-points)")
