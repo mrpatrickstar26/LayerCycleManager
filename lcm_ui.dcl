@@ -1,7 +1,7 @@
 // ============================================================
 // Layer Cycle Manager
 // File: lcm_ui.dcl
-// Stage 4: main DCL dialog
+// Main DCL dialog: ByLayer toggle + ACI picker + arrow deletion
 // ============================================================
 
 lcm_main_dlg : dialog {
@@ -37,13 +37,6 @@ lcm_main_dlg : dialog {
         width = 35;
       }
     }
-
-    : row {
-      : button {
-        key = "refresh_layers";
-        label = "Обновить слои";
-      }
-    }
   }
 
 
@@ -55,20 +48,16 @@ lcm_main_dlg : dialog {
     label = "Параметры стрелок";
 
     : row {
-      : text {
-        label = "Цвет:";
-        width = 18;
-      }
-
-      : popup_list {
-        key = "color_mode";
-        width = 20;
+      : toggle {
+        key = "by_layer";
+        label = "По слою";
+        value = "0";
       }
     }
 
     : row {
       : text {
-        label = "ACI:";
+        label = "Цвет (ACI):";
         width = 18;
       }
 
@@ -79,29 +68,7 @@ lcm_main_dlg : dialog {
 
       : button {
         key = "pick_aci";
-        label = "Выбрать...";
-      }
-    }
-
-    : row {
-      : text {
-        label = "RGB:";
-        width = 18;
-      }
-
-      : edit_box {
-        key = "rgb_r";
-        width = 6;
-      }
-
-      : edit_box {
-        key = "rgb_g";
-        width = 6;
-      }
-
-      : edit_box {
-        key = "rgb_b";
-        width = 6;
+        label = "Выбрать цвет...";
       }
     }
 
@@ -128,6 +95,31 @@ lcm_main_dlg : dialog {
         width = 10;
       }
     }
+
+    : row {
+      : text {
+        label = "Слой удаления:";
+        width = 18;
+      }
+
+      : popup_list {
+        key = "del_layer";
+        width = 20;
+      }
+    }
+
+    : row {
+      : text {
+        key = "del_count";
+        label = "Стрелок: -";
+        width = 18;
+      }
+
+      : button {
+        key = "delete_arrows";
+        label = "Удалить";
+      }
+    }
   }
 
 
@@ -144,15 +136,20 @@ lcm_main_dlg : dialog {
       width = 70;
     }
 
-    : row {
+      : row {
       : text {
         label = "Из нулевого слоя:";
         width = 20;
       }
 
+      : edit_box {
+        key = "map_from_edit";
+        width = 20;
+      }
+
       : popup_list {
         key = "map_from";
-        width = 30;
+        width = 15;
       }
     }
 
@@ -162,9 +159,14 @@ lcm_main_dlg : dialog {
         width = 20;
       }
 
+      : edit_box {
+        key = "map_to_edit";
+        width = 20;
+      }
+
       : popup_list {
         key = "map_to";
-        width = 30;
+        width = 15;
       }
     }
 
@@ -214,6 +216,11 @@ lcm_main_dlg : dialog {
       key = "accept";
       label = "Выполнить";
       is_default = true;
+    }
+
+    : button {
+      key = "minimize";
+      label = "В чертёж";
     }
 
     : button {

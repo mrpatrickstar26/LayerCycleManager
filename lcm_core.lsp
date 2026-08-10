@@ -1,8 +1,7 @@
 ;;; ============================================================
 ;;; Layer Cycle Manager
 ;;; File: lcm_core.lsp
-;;; Stage 3: arrow drawing core
-;;; Fixed: STRINGP, 2D distance, rounding, error handling
+;;; Arrow drawing core (ByLayer / ACI only, no RGB)
 ;;; ============================================================
 
 (vl-load-com)
@@ -87,9 +86,8 @@
 ;;; ------------------------------------------------------------
 ;;; Set layer and color for object
 ;;; color-mode:
-;;; "BYLAYER"
-;;; "ACI"
-;;; "RGB"
+;;; "BYLAYER" - color from layer
+;;; "ACI"     - AutoCAD Color Index 1..255
 ;;; ------------------------------------------------------------
 
 (defun lcm:set-object-properties
@@ -99,7 +97,7 @@
     color-mode
     color-data
     /
-    mode tc r g b
+    mode
   )
 
   (if obj
@@ -111,9 +109,9 @@
         (list obj layer-name)
       )
 
-      ;; Default color mode: ByLayer
+      ;; Default color mode
       (if (not color-mode)
-        (setq color-mode "BYLAYER")
+        (setq color-mode "ACI")
       )
 
       ;; color-mode must be string
@@ -138,17 +136,15 @@
 
 
         ;; ------------------------------------------------------------
-        ;; ACI color index
+        ;; ACI color index (default for any other value)
         ;; ------------------------------------------------------------
 
-        ((= mode "ACI")
+        (T
 
-         ;; If color-data is string, convert to integer
          (if (lcm:is-string color-data)
            (setq color-data (atoi color-data))
          )
 
-         ;; Validate ACI
          (if (or
                (not (numberp color-data))
                (< color-data 1)
@@ -160,81 +156,6 @@
          (vl-catch-all-apply
            'vla-put-Color
            (list obj (fix color-data))
-         )
-        )
-
-
-        ;; ------------------------------------------------------------
-        ;; RGB TrueColor
-        ;; ------------------------------------------------------------
-
-        ((= mode "RGB")
-
-         (if (and
-               (listp color-data)
-               (>= (length color-data) 3)
-             )
-           (progn
-
-             (setq r (car color-data))
-             (setq g (cadr color-data))
-             (setq b (caddr color-data))
-
-             ;; Convert strings if needed
-             (if (lcm:is-string r)
-               (setq r (atoi r))
-             )
-
-             (if (lcm:is-string g)
-               (setq g (atoi g))
-             )
-
-             (if (lcm:is-string b)
-               (setq b (atoi b))
-             )
-
-             ;; Validate numbers
-             (if (and
-                   (numberp r)
-                   (numberp g)
-                   (numberp b)
-                 )
-               (progn
-
-                 ;; Clamp RGB
-                 (if (< r 0) (setq r 0))
-                 (if (> r 255) (setq r 255))
-
-                 (if (< g 0) (setq g 0))
-                 (if (> g 255) (setq g 255))
-
-                 (if (< b 0) (setq b 0))
-                 (if (> b 255) (setq b 255))
-
-                 (setq tc
-                   (vl-catch-all-apply
-                     'vla-get-TrueColor
-                     (list obj)
-                   )
-                 )
-
-                 (if (not (vl-catch-all-error-p tc))
-                   (progn
-
-                     (vl-catch-all-apply
-                       'vla-SetRGB
-                       (list tc r g b)
-                     )
-
-                     (vl-catch-all-apply
-                       'vla-put-TrueColor
-                       (list obj tc)
-                     )
-                   )
-                 )
-               )
-             )
-           )
          )
         )
       )
@@ -278,24 +199,12 @@
     (setq text-height 2.5)
   )
 
-  ;; Default color is ByLayer
   (if (not color-mode)
-    (setq color-mode "BYLAYER")
+    (setq color-mode "ACI")
   )
 
-  ;; color-data may be nil for ByLayer
-
-  ;; If RGB mode is requested but no RGB list is provided,
-  ;; fallback to red ACI.
-  (if (and
-        (lcm:is-string color-mode)
-        (= (strcase color-mode) "RGB")
-        (not (listp color-data))
-      )
-    (progn
-      (setq color-mode "ACI")
-      (setq color-data 1)
-    )
+  (if (not color-data)
+    (setq color-data 1)
   )
 
   (if (or
@@ -470,11 +379,6 @@
 
 ;;; ------------------------------------------------------------
 ;;; Draw many arrows from mappings
-;;; mappings format:
-;;; (
-;;;   ((from . "1") (to . "1"))
-;;;   ((from . "2") (to . "5"))
-;;; )
 ;;; ------------------------------------------------------------
 
 (defun lcm:run
@@ -808,5 +712,251 @@
   (princ)
 )
 
+;;; ============================================================
+;;; Arrow detection and deletion
+;;; ============================================================
+
+;;; ------------------------------------------------------------
+;;; Get line vertex by property name
+;;; ------------------------------------------------------------
+
+(defun lcm:get-line-point (obj prop / v)
+  (setq v (vl-catch-all-apply 'vlax-get (list obj prop)))
+
+  (if (not (vl-catch-all-error-p v))
+    (lcm:coords->xy v)
+    nil
+  )
+)
+
+
+;;; ------------------------------------------------------------
+;;; Get solid bounding box as (minx miny maxx maxy)
+;;; ------------------------------------------------------------
+
+;;; ------------------------------------------------------------
+;;; Get solid bounding box as (minx miny maxx maxy)
+;;; Handles both variant and safearray return types
+;;; ------------------------------------------------------------
+
+(defun lcm:get-bbox (obj / minpt maxpt a b)
+  (setq minpt nil)
+  (setq maxpt nil)
+
+  (vl-catch-all-apply
+    'vla-GetBoundingBox
+    (list obj 'minpt 'maxpt)
+  )
+
+  (if (and minpt maxpt)
+    (progn
+      (setq a (lcm:coords->xy minpt))
+      (setq b (lcm:coords->xy maxpt))
+
+      (if (and a b)
+        (list (car a) (cadr a) (car b) (cadr b))
+        nil
+      )
+    )
+    nil
+  )
+)
+
+
+;;; ------------------------------------------------------------
+;;; Check point inside bounding box with tolerance
+;;; ------------------------------------------------------------
+
+(defun lcm:point-in-bbox (pt bb tol)
+  (and
+    (>= (car pt) (- (nth 0 bb) tol))
+    (<= (car pt) (+ (nth 2 bb) tol))
+    (>= (cadr pt) (- (nth 1 bb) tol))
+    (<= (cadr pt) (+ (nth 3 bb) tol))
+  )
+)
+
+
+;;; ------------------------------------------------------------
+;;; Find arrows on layer
+;;; An arrow is detected by its length text:
+;;; text insertion point coincides with a line endpoint,
+;;; and a solid arrow head surrounds the same point.
+;;; Returns list of (text-handle line-handle solid-handle)
+;;; ------------------------------------------------------------
+
+(defun lcm:find-arrows
+  (
+    layer-name
+    /
+    acad doc ms
+    obj obj-name layer
+    texts lines solids
+    t-item l-item s-item
+    tip p1 p2 bb
+    line-h solid-h
+    tol result
+  )
+
+  (setq tol 0.001)
+
+  (setq acad (vlax-get-acad-object))
+  (setq doc (vla-get-ActiveDocument acad))
+  (setq ms (vla-get-ModelSpace doc))
+
+  (setq texts '())
+  (setq lines '())
+  (setq solids '())
+
+  ;; Collect candidates from the layer
+  (vlax-for obj ms
+
+    (setq layer
+      (vl-catch-all-apply 'vla-get-Layer (list obj))
+    )
+
+    (if (and
+          (not (vl-catch-all-error-p layer))
+          (= (strcase layer) (strcase layer-name))
+        )
+      (progn
+        (setq obj-name
+          (vl-catch-all-apply 'vla-get-ObjectName (list obj))
+        )
+
+        (cond
+
+          ((= obj-name "AcDbText")
+           (setq tip (lcm:get-object-coords obj))
+           (if tip
+             (setq texts
+               (cons
+                 (list (vla-get-Handle obj) (car tip) (cadr tip))
+                 texts
+               )
+             )
+           )
+          )
+
+          ((= obj-name "AcDbLine")
+           (setq p1 (lcm:get-line-point obj 'StartPoint))
+           (setq p2 (lcm:get-line-point obj 'EndPoint))
+           (if (and p1 p2)
+             (setq lines
+               (cons (list (vla-get-Handle obj) p1 p2) lines)
+             )
+           )
+          )
+
+          ((= obj-name "AcDbSolid")
+           (setq bb (lcm:get-bbox obj))
+           (if bb
+             (setq solids
+               (cons (list (vla-get-Handle obj) bb) solids)
+             )
+           )
+          )
+        )
+      )
+    )
+  )
+
+  ;; Match texts to lines and solids
+  (setq result '())
+
+  (foreach t-item texts
+
+    (setq tip (list (nth 1 t-item) (nth 2 t-item)))
+
+    ;; Line with endpoint at the text point
+    (setq line-h nil)
+
+    (foreach l-item lines
+      (if (not line-h)
+        (if (or
+              (< (distance tip (nth 1 l-item)) tol)
+              (< (distance tip (nth 2 l-item)) tol)
+            )
+          (setq line-h (nth 0 l-item))
+        )
+      )
+    )
+
+    (if line-h
+      (progn
+
+        ;; Solid whose bbox contains the text point
+        (setq solid-h nil)
+
+        (foreach s-item solids
+          (if (not solid-h)
+            (if (lcm:point-in-bbox tip (nth 1 s-item) tol)
+              (setq solid-h (nth 0 s-item))
+            )
+          )
+        )
+
+        (setq result
+          (cons
+            (list (nth 0 t-item) line-h solid-h)
+            result
+          )
+        )
+      )
+    )
+  )
+
+  result
+)
+
+
+;;; ------------------------------------------------------------
+;;; Delete one object by handle
+;;; ------------------------------------------------------------
+
+(defun lcm:delete-by-handle (h / e o)
+  (if h
+    (progn
+      (setq e (handent h))
+      (if e
+        (progn
+          (setq o (vlax-ename->vla-object e))
+          (vl-catch-all-apply 'vla-Delete (list o))
+        )
+      )
+    )
+  )
+)
+
+
+;;; ------------------------------------------------------------
+;;; Delete all arrows on layer, returns count
+;;; Deletion is wrapped into one undo block
+;;; ------------------------------------------------------------
+
+(defun lcm:delete-arrows (layer-name / arrows cnt acad doc)
+
+  (setq arrows (lcm:find-arrows layer-name))
+  (setq cnt (length arrows))
+
+  (if (> cnt 0)
+    (progn
+      (setq acad (vlax-get-acad-object))
+      (setq doc (vla-get-ActiveDocument acad))
+
+      (vla-StartUndoMark doc)
+
+      (foreach a arrows
+        (lcm:delete-by-handle (nth 0 a))  ; length text
+        (lcm:delete-by-handle (nth 1 a))  ; line
+        (lcm:delete-by-handle (nth 2 a))  ; solid head
+      )
+
+      (vla-EndUndoMark doc)
+    )
+  )
+
+  cnt
+)
 
 (princ)

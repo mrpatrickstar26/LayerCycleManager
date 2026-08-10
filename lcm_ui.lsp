@@ -1,7 +1,7 @@
 ;;; ============================================================
 ;;; Layer Cycle Manager
 ;;; File: lcm_ui.lsp
-;;; Stage 6: DCL interface logic with settings restore
+;;; DCL interface logic: ByLayer toggle, ACI picker, arrow deletion
 ;;; ============================================================
 
 (vl-load-com)
@@ -135,6 +135,33 @@
 
 
 ;;; ------------------------------------------------------------
+;;; Fill deletion layer popup list
+;;; ------------------------------------------------------------
+
+(defun lcm:ui-fill-del-layer (/ current)
+
+  (setq current
+    (lcm:ui-get-popup-value "del_layer" lcm:layers)
+  )
+
+  (start_list "del_layer")
+  (foreach layer lcm:layers
+    (add_list layer)
+  )
+  (end_list)
+
+  (if current
+    (lcm:ui-select-item "del_layer" lcm:layers current)
+    (if (> (length lcm:layers) 0)
+      (set_tile "del_layer" "0")
+    )
+  )
+
+  (princ)
+)
+
+
+;;; ------------------------------------------------------------
 ;;; Point name helpers
 ;;; ------------------------------------------------------------
 
@@ -166,11 +193,17 @@
   (end_list)
 
   (if (> (length lcm:points-zero) 0)
-    (set_tile "map_from" "0")
+    (progn
+      (set_tile "map_from" "0")
+      (set_tile "map_from_edit" (nth 0 (lcm:ui-point-names-zero)))
+    )
   )
 
   (if (> (length lcm:points-last) 0)
-    (set_tile "map_to" "0")
+    (progn
+      (set_tile "map_to" "0")
+      (set_tile "map_to_edit" (nth 0 (lcm:ui-point-names-last)))
+    )
   )
 
   (princ)
@@ -298,6 +331,19 @@
   (reverse out)
 )
 
+;;; ------------------------------------------------------------
+;;; When user picks value from popup, copy it into edit box
+;;; ------------------------------------------------------------
+
+(defun lcm:ui-popup-sync (popup-key edit-key lst / val)
+  (setq val (lcm:ui-get-popup-value popup-key lst))
+
+  (if val
+    (set_tile edit-key val)
+  )
+
+  (princ)
+)
 
 ;;; ------------------------------------------------------------
 ;;; Add mapping
@@ -305,50 +351,50 @@
 
 (defun lcm:ui-add-map (/ from to new)
 
-  (setq from
-    (lcm:ui-get-popup-value
-      "map_from"
-      (lcm:ui-point-names-zero)
+  (setq from (vl-string-trim " " (get_tile "map_from_edit")))
+  (setq to (vl-string-trim " " (get_tile "map_to_edit")))
+
+  (cond
+
+    ((or (= from "") (= to ""))
+     (alert "Введите имена точек или выберите их из списков.")
     )
-  )
 
-  (setq to
-    (lcm:ui-get-popup-value
-      "map_to"
-      (lcm:ui-point-names-last)
+    ((not (member from (lcm:ui-point-names-zero)))
+     (alert (strcat "Точка \"" from "\" не найдена в нулевом слое."))
     )
-  )
 
-  (if (or (not from) (not to))
-    (alert "Выберите точку из нулевого слоя и точку из последнего слоя.")
-    (progn
+    ((not (member to (lcm:ui-point-names-last)))
+     (alert (strcat "Точка \"" to "\" не найдена в последнем слое."))
+    )
 
-      (setq new
-        (list
-          (cons 'from from)
-          (cons 'to to)
-        )
-      )
+    (T
+     (setq new
+       (list
+         (cons 'from from)
+         (cons 'to to)
+       )
+     )
 
-      (setq lcm:maps
-        (vl-remove-if
-          (function
-            (lambda (m)
-              (= (cdr (assoc 'from m)) from)
-            )
-          )
-          lcm:maps
-        )
-      )
+     (setq lcm:maps
+       (vl-remove-if
+         (function
+           (lambda (m)
+             (= (cdr (assoc 'from m)) from)
+           )
+         )
+         lcm:maps
+       )
+     )
 
-      (setq lcm:maps
-        (append
-          lcm:maps
-          (list new)
-        )
-      )
+     (setq lcm:maps
+       (append
+         lcm:maps
+         (list new)
+       )
+     )
 
-      (lcm:ui-fill-mappings)
+     (lcm:ui-fill-mappings)
     )
   )
 
@@ -369,36 +415,37 @@
   (if idx
     (progn
 
-      (setq from
-        (lcm:ui-get-popup-value
-          "map_from"
-          (lcm:ui-point-names-zero)
-        )
-      )
+      (setq from (vl-string-trim " " (get_tile "map_from_edit")))
+      (setq to (vl-string-trim " " (get_tile "map_to_edit")))
 
-      (setq to
-        (lcm:ui-get-popup-value
-          "map_to"
-          (lcm:ui-point-names-last)
-        )
-      )
+      (cond
 
-      (if (and from to)
-        (progn
-          (setq lcm:maps
-            (lcm:list-set-nth
-              lcm:maps
-              idx
-              (list
-                (cons 'from from)
-                (cons 'to to)
-              )
-            )
-          )
-
-          (lcm:ui-fill-mappings)
+        ((or (= from "") (= to ""))
+         (alert "Введите имена точек или выберите их из списков.")
         )
-        (alert "Выберите точку из нулевого слоя и точку из последнего слоя.")
+
+        ((not (member from (lcm:ui-point-names-zero)))
+         (alert (strcat "Точка \"" from "\" не найдена в нулевом слое."))
+        )
+
+        ((not (member to (lcm:ui-point-names-last)))
+         (alert (strcat "Точка \"" to "\" не найдена в последнем слое."))
+        )
+
+        (T
+         (setq lcm:maps
+           (lcm:list-set-nth
+             lcm:maps
+             idx
+             (list
+               (cons 'from from)
+               (cons 'to to)
+             )
+           )
+         )
+
+         (lcm:ui-fill-mappings)
+        )
       )
     )
     (alert "Сначала выберите сопоставление в списке.")
@@ -504,6 +551,9 @@
         (lcm:ui-point-names-last)
       )
 
+      (set_tile "map_from_edit" (cdr (assoc 'from m)))
+      (set_tile "map_to_edit" (cdr (assoc 'to m)))
+
       (lcm:ui-select-item
         "map_from"
         from-names
@@ -523,59 +573,32 @@
 
 
 ;;; ------------------------------------------------------------
-;;; Color mode
+;;; ByLayer toggle: enable/disable ACI fields
 ;;; ------------------------------------------------------------
 
-(defun lcm:ui-fill-color-mode ()
+(defun lcm:ui-update-by-layer (/ on)
 
-  (start_list "color_mode")
-  (add_list "По слою")
-  (add_list "ACI")
-  (add_list "RGB")
-  (end_list)
+  (setq on (= (get_tile "by_layer") "1"))
 
-  (princ)
-)
-
-
-(defun lcm:ui-update-color-mode (/ mode)
-
-  (setq mode (atoi (get_tile "color_mode")))
-
-  (cond
-
-    ;; ByLayer
-    ((= mode 0)
-     (foreach k '("aci" "pick_aci" "rgb_r" "rgb_g" "rgb_b")
-       (mode_tile k 1)
-     )
+  (if on
+    (progn
+      (mode_tile "aci" 1)
+      (mode_tile "pick_aci" 1)
     )
-
-    ;; ACI
-    ((= mode 1)
-     (mode_tile "aci" 0)
-     (mode_tile "pick_aci" 0)
-
-     (foreach k '("rgb_r" "rgb_g" "rgb_b")
-       (mode_tile k 1)
-     )
-    )
-
-    ;; RGB
-    ((= mode 2)
-     (foreach k '("aci" "pick_aci")
-       (mode_tile k 1)
-     )
-
-     (foreach k '("rgb_r" "rgb_g" "rgb_b")
-       (mode_tile k 0)
-     )
+    (progn
+      (mode_tile "aci" 0)
+      (mode_tile "pick_aci" 0)
     )
   )
 
   (princ)
 )
 
+
+;;; ------------------------------------------------------------
+;;; Open native AutoCAD color dialog (with HSL palette)
+;;; and put nearest ACI number into the field
+;;; ------------------------------------------------------------
 
 (defun lcm:ui-pick-aci (/ current new)
 
@@ -641,10 +664,110 @@
 
 
 ;;; ------------------------------------------------------------
+;;; Arrow deletion UI: update counter
+;;; ------------------------------------------------------------
+
+(defun lcm:ui-update-del-count (/ layer n)
+
+  (setq layer
+    (lcm:ui-get-popup-value "del_layer" lcm:layers)
+  )
+
+  (if layer
+    (progn
+      (setq n (length (lcm:find-arrows layer)))
+      (set_tile "del_count" (strcat "Стрелок: " (itoa n)))
+    )
+    (set_tile "del_count" "Стрелок: -")
+  )
+
+  (princ)
+)
+
+
+;;; ------------------------------------------------------------
+;;; Arrow deletion UI: delete all arrows on selected layer
+;;; ------------------------------------------------------------
+
+(defun lcm:ui-delete-arrows (/ layer n)
+
+  (setq layer
+    (lcm:ui-get-popup-value "del_layer" lcm:layers)
+  )
+
+  (if layer
+    (progn
+      (setq n (lcm:delete-arrows layer))
+
+      (prompt
+        (strcat
+          "\nLCM: удалено стрелок на слое '"
+          layer
+          "': "
+          (itoa n)
+        )
+      )
+
+      (lcm:ui-update-del-count)
+    )
+  )
+
+  (princ)
+)
+
+
+;;; ------------------------------------------------------------
+;;; Session state: keep dialog values between minimize/restore
+;;; ------------------------------------------------------------
+
+(defun lcm:ui-save-session ()
+  (setq lcm:session-zero
+    (lcm:ui-get-popup-value "layer_zero" lcm:layers)
+  )
+
+  (setq lcm:session-last
+    (lcm:ui-get-popup-value "layer_last" lcm:layers)
+  )
+
+  (setq lcm:session-scale (get_tile "scale"))
+  (setq lcm:session-text (get_tile "text_height"))
+  (setq lcm:session-aci (get_tile "aci"))
+  (setq lcm:session-bylayer (get_tile "by_layer"))
+  (setq lcm:session-del
+    (lcm:ui-get-popup-value "del_layer" lcm:layers)
+  )
+
+  (princ)
+)
+
+
+;;; ------------------------------------------------------------
+;;; Restore session state to dialog tiles
+;;; ------------------------------------------------------------
+
+(defun lcm:ui-apply-session ()
+  (lcm:ui-select-item "layer_zero" lcm:layers lcm:session-zero)
+  (lcm:ui-select-item "layer_last" lcm:layers lcm:session-last)
+
+  (set_tile "scale" lcm:session-scale)
+  (set_tile "text_height" lcm:session-text)
+  (set_tile "aci" lcm:session-aci)
+  (set_tile "by_layer" lcm:session-bylayer)
+
+  (lcm:ui-select-item "del_layer" lcm:layers lcm:session-del)
+
+  (lcm:ui-update-by-layer)
+  (lcm:ui-update-del-count)
+
+  (princ)
+)
+
+
+;;; ------------------------------------------------------------
 ;;; Apply saved settings to dialog tiles
 ;;; ------------------------------------------------------------
 
-(defun lcm:ui-apply-settings (/ rgb mode)
+(defun lcm:ui-apply-settings (/ by-layer)
 
   ;; Restore last layers
   (lcm:ui-select-item
@@ -672,27 +795,23 @@
     (itoa (lcm:config-get "ACI"))
   )
 
-  ;; Restore RGB
-  (setq rgb (lcm:config-get "RGB"))
+  ;; Restore ByLayer toggle
+  (setq by-layer (lcm:config-get "BY_LAYER"))
 
-  (if (and (listp rgb) (>= (length rgb) 3))
-    (progn
-      (set_tile "rgb_r" (itoa (nth 0 rgb)))
-      (set_tile "rgb_g" (itoa (nth 1 rgb)))
-      (set_tile "rgb_b" (itoa (nth 2 rgb)))
-    )
+  (if (and by-layer (/= by-layer 0))
+    (set_tile "by_layer" "1")
+    (set_tile "by_layer" "0")
   )
 
-  ;; Restore color mode
-  (setq mode (lcm:config-get "COLOR_MODE"))
-
-  (if (or (not mode) (< mode 0) (> mode 2))
-    (setq mode 0)
+  ;; Restore deletion layer
+  (lcm:ui-select-item
+    "del_layer"
+    lcm:layers
+    (lcm:config-get "DEL_LAYER")
   )
 
-  (set_tile "color_mode" (itoa mode))
-
-  (lcm:ui-update-color-mode)
+  (lcm:ui-update-by-layer)
+  (lcm:ui-update-del-count)
 
   (princ)
 )
@@ -709,10 +828,9 @@
     layer-last
     scale
     text-height
-    mode
+    by-layer
     color-mode
     color-data
-    r g b
     valid
   )
 
@@ -749,55 +867,25 @@
     )
   )
 
-  (setq mode (atoi (get_tile "color_mode")))
+  ;; Color mode: ByLayer toggle or ACI
+  (setq by-layer (= (get_tile "by_layer") "1"))
 
-  (cond
-
-    ;; ByLayer
-    ((= mode 0)
-     (setq color-mode "BYLAYER")
-     (setq color-data nil)
+  (if by-layer
+    (progn
+      (setq color-mode "BYLAYER")
+      (setq color-data nil)
     )
+    (progn
+      (setq color-data (atoi (get_tile "aci")))
 
-    ;; ACI
-    ((= mode 1)
-     (setq color-data (atoi (get_tile "aci")))
+      (if (or (< color-data 1) (> color-data 255))
+        (progn
+          (alert "Цвет ACI должен быть в диапазоне от 1 до 255.")
+          (exit)
+        )
+      )
 
-     (if (or (< color-data 1) (> color-data 255))
-       (progn
-         (alert "Цвет ACI должен быть в диапазоне от 1 до 255.")
-         (exit)
-       )
-     )
-
-     (setq color-mode "ACI")
-    )
-
-    ;; RGB
-    ((= mode 2)
-     (setq r (atoi (get_tile "rgb_r")))
-     (setq g (atoi (get_tile "rgb_g")))
-     (setq b (atoi (get_tile "rgb_b")))
-
-     (if (or
-           (< r 0) (> r 255)
-           (< g 0) (> g 255)
-           (< b 0) (> b 255)
-         )
-       (progn
-         (alert "Значения RGB должны быть в диапазоне от 0 до 255.")
-         (exit)
-       )
-     )
-
-     (setq color-mode "RGB")
-     (setq color-data (list r g b))
-    )
-
-    ;; Fallback
-    (T
-     (setq color-mode "BYLAYER")
-     (setq color-data nil)
+      (setq color-mode "ACI")
     )
   )
 
@@ -824,14 +912,15 @@
   (lcm:config-set "LAYER_LAST" layer-last)
   (lcm:config-set "SCALE" scale)
   (lcm:config-set "TEXT_HEIGHT" text-height)
-  (lcm:config-set "COLOR_MODE" mode)
+  (lcm:config-set "BY_LAYER" (if by-layer 1 0))
 
-  (if (= mode 1)
+  (if (not by-layer)
     (lcm:config-set "ACI" color-data)
   )
 
-  (if (= mode 2)
-    (lcm:config-set "RGB" color-data)
+  (lcm:config-set
+    "DEL_LAYER"
+    (lcm:ui-get-popup-value "del_layer" lcm:layers)
   )
 
   (lcm:config-save)
@@ -894,21 +983,29 @@
 
   ;; Fill interface
   (lcm:ui-fill-layers)
-  (lcm:ui-fill-color-mode)
-  (lcm:ui-apply-settings)
+  (lcm:ui-fill-del-layer)
+
+  ;; If dialog was minimized earlier, restore exact session state;
+  ;; otherwise restore last saved settings
+  (if lcm:session-zero
+    (lcm:ui-apply-session)
+    (lcm:ui-apply-settings)
+  )
+
   (lcm:ui-refresh-points)
 
   ;; Actions
   (action_tile "layer_zero" "(lcm:ui-refresh-points)")
   (action_tile "layer_last" "(lcm:ui-refresh-points)")
 
-  (action_tile
-    "refresh_layers"
-    "(progn (lcm:ui-fill-layers) (lcm:ui-refresh-points))"
-  )
-
-  (action_tile "color_mode" "(lcm:ui-update-color-mode)")
+  (action_tile "by_layer" "(lcm:ui-update-by-layer)")
   (action_tile "pick_aci" "(lcm:ui-pick-aci)")
+
+  (action_tile "del_layer" "(lcm:ui-update-del-count)")
+  (action_tile "delete_arrows" "(lcm:ui-delete-arrows)")
+
+  (action_tile "map_from" "(lcm:ui-popup-sync \"map_from\" \"map_from_edit\" (lcm:ui-point-names-zero))")
+  (action_tile "map_to" "(lcm:ui-popup-sync \"map_to\" \"map_to_edit\" (lcm:ui-point-names-last))")
 
   (action_tile "mappings" "(lcm:ui-on-mapping-select)")
 
@@ -918,15 +1015,26 @@
   (action_tile "auto_map" "(lcm:ui-auto-map)")
   (action_tile "clear_map" "(lcm:ui-clear-map)")
 
-  (action_tile "accept" "(lcm:ui-accept)")
-  (action_tile "cancel" "(done_dialog 0)")
+  (action_tile "accept" "(progn (lcm:ui-save-session) (lcm:ui-accept))")
+  (action_tile "minimize" "(progn (lcm:ui-save-session) (done_dialog 2))")
+  (action_tile "cancel" "(progn (lcm:ui-save-session) (done_dialog 0))")
 
   (setq result (start_dialog))
 
   (unload_dialog dcl-id)
 
-  (if (= result 1)
-    (lcm:ui-execute)
+  (cond
+
+    ;; Execute
+    ((= result 1)
+     (lcm:ui-execute)
+    )
+
+    ;; Minimize to drawing
+    ((= result 2)
+     (prompt "\nLCM: диалог свёрнут. Чертеж активен.")
+     (prompt "\nLCM: вернитесь командой LCM или кнопкой на ленте.")
+    )
   )
 
   (princ)

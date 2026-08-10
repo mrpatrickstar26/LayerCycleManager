@@ -1,7 +1,7 @@
 ;;; ============================================================
 ;;; Layer Cycle Manager
 ;;; File: lcm_config.lsp
-;;; Stage 6: settings storage
+;;; Settings storage (ByLayer toggle + ACI, no RGB)
 ;;; ============================================================
 
 (vl-load-com)
@@ -15,9 +15,9 @@
   (list
     (cons "LAYER_ZERO" "")
     (cons "LAYER_LAST" "")
-    (cons "COLOR_MODE" 0)
+    (cons "BY_LAYER" 0)
     (cons "ACI" 1)
-    (cons "RGB" (list 255 0 0))
+    (cons "DEL_LAYER" "")
     (cons "TEXT_HEIGHT" 2.5)
     (cons "SCALE" 5.0)
     (cons "TEXT_SEARCH_RADIUS" 50.0)
