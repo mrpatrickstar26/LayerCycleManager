@@ -95,6 +95,9 @@
   (lcm:load-module "lcm_core.lsp")
   (lcm:load-module "lcm_ui.lsp")
 
+  ;; Diagnostics module (stage 0): LCMSTATS, LCMDUMP, LCMDIAGPAIR
+  (lcm:load-module "lcm_diag.lsp")
+
   (princ)
 )
 
