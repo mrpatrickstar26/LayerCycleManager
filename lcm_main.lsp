@@ -95,6 +95,18 @@
   (lcm:load-module "lcm_core.lsp")
   (lcm:load-module "lcm_ui.lsp")
 
+  ;; Diagnostics module (stage 0): LCMSTATS, LCMDUMP, LCMDIAGPAIR
+  (lcm:load-module "lcm_diag.lsp")
+
+  ;; Coordinate matching module (stage 1): LCMGEOFILL
+  (lcm:load-module "lcm_geo.lsp")
+
+  ;; Cycle chain module (stage 2): LCMCHAIN
+  (lcm:load-module "lcm_chain.lsp")
+
+  ;; Verification module (stage 3): LCMCHECK
+  (lcm:load-module "lcm_check.lsp")
+
   (princ)
 )
 

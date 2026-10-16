@@ -134,31 +134,6 @@
 )
 
 
-;;; ------------------------------------------------------------
-;;; Fill deletion layer popup list
-;;; ------------------------------------------------------------
-
-(defun lcm:ui-fill-del-layer (/ current)
-
-  (setq current
-    (lcm:ui-get-popup-value "del_layer" lcm:layers)
-  )
-
-  (start_list "del_layer")
-  (foreach layer lcm:layers
-    (add_list layer)
-  )
-  (end_list)
-
-  (if current
-    (lcm:ui-select-item "del_layer" lcm:layers current)
-    (if (> (length lcm:layers) 0)
-      (set_tile "del_layer" "0")
-    )
-  )
-
-  (princ)
-)
 
 
 ;;; ------------------------------------------------------------
@@ -663,57 +638,6 @@
 )
 
 
-;;; ------------------------------------------------------------
-;;; Arrow deletion UI: update counter
-;;; ------------------------------------------------------------
-
-(defun lcm:ui-update-del-count (/ layer n)
-
-  (setq layer
-    (lcm:ui-get-popup-value "del_layer" lcm:layers)
-  )
-
-  (if layer
-    (progn
-      (setq n (length (lcm:find-arrows layer)))
-      (set_tile "del_count" (strcat "Стрелок: " (itoa n)))
-    )
-    (set_tile "del_count" "Стрелок: -")
-  )
-
-  (princ)
-)
-
-
-;;; ------------------------------------------------------------
-;;; Arrow deletion UI: delete all arrows on selected layer
-;;; ------------------------------------------------------------
-
-(defun lcm:ui-delete-arrows (/ layer n)
-
-  (setq layer
-    (lcm:ui-get-popup-value "del_layer" lcm:layers)
-  )
-
-  (if layer
-    (progn
-      (setq n (lcm:delete-arrows layer))
-
-      (prompt
-        (strcat
-          "\nLCM: удалено стрелок на слое '"
-          layer
-          "': "
-          (itoa n)
-        )
-      )
-
-      (lcm:ui-update-del-count)
-    )
-  )
-
-  (princ)
-)
 
 
 ;;; ------------------------------------------------------------
@@ -733,9 +657,6 @@
   (setq lcm:session-text (get_tile "text_height"))
   (setq lcm:session-aci (get_tile "aci"))
   (setq lcm:session-bylayer (get_tile "by_layer"))
-  (setq lcm:session-del
-    (lcm:ui-get-popup-value "del_layer" lcm:layers)
-  )
 
   (princ)
 )
@@ -754,10 +675,7 @@
   (set_tile "aci" lcm:session-aci)
   (set_tile "by_layer" lcm:session-bylayer)
 
-  (lcm:ui-select-item "del_layer" lcm:layers lcm:session-del)
-
   (lcm:ui-update-by-layer)
-  (lcm:ui-update-del-count)
 
   (princ)
 )
@@ -803,15 +721,7 @@
     (set_tile "by_layer" "0")
   )
 
-  ;; Restore deletion layer
-  (lcm:ui-select-item
-    "del_layer"
-    lcm:layers
-    (lcm:config-get "DEL_LAYER")
-  )
-
   (lcm:ui-update-by-layer)
-  (lcm:ui-update-del-count)
 
   (princ)
 )
@@ -918,11 +828,6 @@
     (lcm:config-set "ACI" color-data)
   )
 
-  (lcm:config-set
-    "DEL_LAYER"
-    (lcm:ui-get-popup-value "del_layer" lcm:layers)
-  )
-
   (lcm:config-save)
 
   (done_dialog 1)
@@ -983,7 +888,6 @@
 
   ;; Fill interface
   (lcm:ui-fill-layers)
-  (lcm:ui-fill-del-layer)
 
   ;; If dialog was minimized earlier, restore exact session state;
   ;; otherwise restore last saved settings
@@ -1001,8 +905,6 @@
   (action_tile "by_layer" "(lcm:ui-update-by-layer)")
   (action_tile "pick_aci" "(lcm:ui-pick-aci)")
 
-  (action_tile "del_layer" "(lcm:ui-update-del-count)")
-  (action_tile "delete_arrows" "(lcm:ui-delete-arrows)")
 
   (action_tile "map_from" "(lcm:ui-popup-sync \"map_from\" \"map_from_edit\" (lcm:ui-point-names-zero))")
   (action_tile "map_to" "(lcm:ui-popup-sync \"map_to\" \"map_to_edit\" (lcm:ui-point-names-last))")
@@ -1014,6 +916,7 @@
   (action_tile "remove_map" "(lcm:ui-remove-map)")
   (action_tile "auto_map" "(lcm:ui-auto-map)")
   (action_tile "clear_map" "(lcm:ui-clear-map)")
+  (action_tile "geo_fill" "(lcm:ui-geo-fill)")
 
   (action_tile "accept" "(progn (lcm:ui-save-session) (lcm:ui-accept))")
   (action_tile "minimize" "(progn (lcm:ui-save-session) (done_dialog 2))")
@@ -1034,6 +937,147 @@
     ((= result 2)
      (prompt "\nLCM: диалог свёрнут. Чертеж активен.")
      (prompt "\nLCM: вернитесь командой LCM или кнопкой на ленте.")
+    )
+  )
+
+  (princ)
+)
+
+
+;;; ------------------------------------------------------------
+;;; Coordinate matching: fill gaps by coordinates
+;;; ------------------------------------------------------------
+
+(defun lcm:ui-map-has-from (name maps / found)
+  (setq found nil)
+  (foreach m maps
+    (if (and (not found) (= (cdr (assoc 'from m)) name))
+      (setq found T)
+    )
+  )
+  found
+)
+
+
+;;; Добавить найденные пары в список диалога.
+;;; Существующие пары сохраняются; строки <not found> заменяются
+;;; найденной парой; новые пары добавляются в конец.
+(defun lcm:ui-geo-merge (mappings / result m from to new)
+  (setq result '())
+
+  (foreach m lcm:maps
+    (setq from (cdr (assoc 'from m)))
+    (setq to (cdr (assoc 'to m)))
+    (setq new
+      (assoc from
+        (mapcar
+          (function (lambda (x) (cons (cdr (assoc 'from x)) x)))
+          mappings
+        )
+      )
+    )
+    (if (and new (= to lcm:placeholder))
+      (setq result (append result (list (cdr new))))
+      (setq result (append result (list m)))
+    )
+  )
+
+  (foreach m mappings
+    (setq from (cdr (assoc 'from m)))
+    (if (not (lcm:ui-map-has-from from result))
+      (setq result (append result (list m)))
+    )
+  )
+
+  (setq lcm:maps result)
+  (lcm:ui-fill-mappings)
+  (princ)
+)
+
+
+;;; Текст сообщения о спорных парах (первые 7 пар с расстояниями).
+(defun lcm:ui-geo-review-text (review / text i item)
+  (setq text (strcat "LCM: спорных пар " (itoa (length review)) "."))
+  (setq text (strcat text "\nОни не добавлены в список и не будут нарисованы."))
+  (setq text (strcat text "\n\nСпорные пары (слой A -> слой B, расстояние):"))
+
+  (setq i 0)
+  (foreach item review
+    (if (< i 7)
+      (setq text
+        (strcat text "\n   " (nth 0 item) " -> " (nth 1 item)
+                "   " (lcm:diag-num (nth 2 item) 3) " м"
+                (if (nth 3 item)
+                  (strcat ", второй кандидат " (lcm:diag-num (nth 3 item) 3) " м")
+                  ""
+                )
+                (if (nth 5 item)
+                  (strcat "  (" (nth 5 item) ")")
+                  ""
+                )
+        )
+      )
+    )
+    (setq i (1+ i))
+  )
+
+  (if (> (length review) 7)
+    (setq text (strcat text "\n   ... и ещё " (itoa (- (length review) 7))))
+  )
+
+  (strcat text "\n\nПодробности - в отчёте reports/lcm_geo_*.csv")
+)
+
+
+;;; Кнопка "Дополнить по координатам"
+(defun lcm:ui-geo-fill
+  (
+    /
+    layer-zero layer-last r-in r-use match mappings review
+  )
+
+  (setq layer-zero (lcm:ui-get-popup-value "layer_zero" lcm:layers))
+  (setq layer-last (lcm:ui-get-popup-value "layer_last" lcm:layers))
+
+  (cond
+
+    ((or (null layer-zero) (null layer-last))
+     (alert "LCM: сначала выберите оба слоя.")
+    )
+
+    ((= layer-zero layer-last)
+     (alert "LCM: слои должны быть разными.")
+    )
+
+    ((not lcm:diag-scan-layer)
+     (alert "LCM: не загружен модуль lcm_diag.lsp.")
+    )
+
+    ((not lcm:geo-match)
+     (alert "LCM: не загружен модуль lcm_geo.lsp.")
+    )
+
+    (T
+     (setq r-in (get_tile "geo_threshold"))
+     (setq r-use (if (and r-in (/= (vl-string-trim " " r-in) "")) (atof r-in) nil))
+     (if (and r-use (<= r-use 0.0)) (setq r-use nil))
+
+     (prompt "\nLCM: сопоставление по именам и координатам...")
+     (setq match (lcm:geo-match layer-zero layer-last r-use))
+     (setq mappings (nth 0 match))
+     (setq review (nth 1 match))
+
+     (lcm:ui-geo-merge mappings)
+
+     (if lcm:geo-write-report
+       (lcm:geo-write-report layer-zero layer-last match)
+     )
+
+     (prompt (strcat "\nLCM: пар в списке: " (itoa (length lcm:maps))
+                     " | спорных: " (itoa (length review))))
+     (if (> (length review) 0)
+       (alert (lcm:ui-geo-review-text review))
+     )
     )
   )
 

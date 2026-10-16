@@ -96,30 +96,6 @@ lcm_main_dlg : dialog {
       }
     }
 
-    : row {
-      : text {
-        label = "Слой удаления:";
-        width = 18;
-      }
-
-      : popup_list {
-        key = "del_layer";
-        width = 20;
-      }
-    }
-
-    : row {
-      : text {
-        key = "del_count";
-        label = "Стрелок: -";
-        width = 18;
-      }
-
-      : button {
-        key = "delete_arrows";
-        label = "Удалить";
-      }
-    }
   }
 
 
@@ -190,6 +166,23 @@ lcm_main_dlg : dialog {
       : button {
         key = "remove_map";
         label = "Удалить";
+      }
+    }
+
+    : row {
+      : text {
+        label = "Порог по координатам:";
+        width = 20;
+      }
+
+      : edit_box {
+        key = "geo_threshold";
+        width = 10;
+      }
+
+      : button {
+        key = "geo_fill";
+        label = "Дополнить по координатам";
       }
     }
 
