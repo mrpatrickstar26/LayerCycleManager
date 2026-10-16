@@ -203,6 +203,65 @@
 )
 
 
+;;; –ассто€ни€ до ближайшего соседа дл€ списка точек (им€ x y handle).
+(defun lcm:geo-nn-list (points / out i j n d best a b)
+  (setq out '())
+  (setq n (length points))
+  (setq i 0)
+  (while (< i n)
+    (setq a (nth i points))
+    (setq best nil)
+    (setq j 0)
+    (while (< j n)
+      (if (/= i j)
+        (progn
+          (setq b (nth j points))
+          (setq d
+            (distance
+              (list (nth 1 a) (nth 2 a))
+              (list (nth 1 b) (nth 2 b))
+            )
+          )
+          (if (or (null best) (< d best))
+            (setq best d)
+          )
+        )
+      )
+      (setq j (1+ j))
+    )
+    (if best
+      (setq out (cons best out))
+    )
+    (setq i (1+ i))
+  )
+  out
+)
+
+
+;;; ќпорное рассто€ние сло€: 5-й процентиль рассто€ний до ближайшего
+;;; соседа по точкам с уникальными именами. ”стойчиво к совпадающим
+;;; точкам и к дубликатам имЄн.
+(defun lcm:geo-spacing-base (layer-name / pts uniq nn)
+  (setq pts (lcm:geo-points (nth 2 (lcm:diag-scan-layer layer-name))))
+  (setq uniq (lcm:geo-unique pts (lcm:geo-name-counts pts)))
+  (setq nn (lcm:geo-nn-list uniq))
+  (if nn
+    (lcm:diag-percentile (vl-sort nn (function <)) 0.05)
+    nil
+  )
+)
+
+
+;;; “о же дл€ уже готового списка точек.
+(defun lcm:geo-spacing-base-points (points / nn)
+  (setq nn (lcm:geo-nn-list points))
+  (if nn
+    (lcm:diag-percentile (vl-sort nn (function <)) 0.05)
+    nil
+  )
+)
+
+
 ;;; ------------------------------------------------------------
 ;;; ќсновное сопоставление
 ;;; ¬озвращает список из п€ти элементов:
@@ -246,12 +305,12 @@
   (setq uniq-a (lcm:geo-unique pts-a counts-a))
   (setq uniq-b (lcm:geo-unique pts-b counts-b))
 
-  ;; --- порог ---
+  ;; --- порог: дол€ от 5-го процентил€ рассто€ний до ближайшего соседа ---
   (setq r-use r-max)
   (if (or (null r-use) (<= r-use 0.0))
     (progn
-      (setq min-a (lcm:geo-min-spacing uniq-a))
-      (setq min-b (lcm:geo-min-spacing uniq-b))
+      (setq min-a (lcm:geo-spacing-base-points uniq-a))
+      (setq min-b (lcm:geo-spacing-base-points uniq-b))
       (setq r-use
         (* lcm:geo-r-factor
            (min (if min-a min-a 1.0) (if min-b min-b 1.0))
@@ -270,22 +329,33 @@
   (foreach pa uniq-a
     (if (= 1 (if (assoc (car pa) counts-b) (cdr (assoc (car pa) counts-b)) 0))
       (progn
-        (setq mappings
-          (append mappings
-            (list
-              (list (cons 'from (car pa)) (cons 'to (car pa)))
+        (setq d (lcm:geo-dist (car pa) (car pa) pts-a pts-b))
+        (if (and d (> d (* 2.0 r-use)))
+          ;; им€ совпало, но точки далеко друг от друга - на проверку
+          (setq review
+            (append review
+              (list (list (car pa) (car pa) d nil
+                          (if (> d 0.0) (/ (* 2.0 r-use) d) nil)
+                          "им€ совпало, но точки далеко"))
             )
           )
-        )
-        (setq details
-          (append details
-            (list (list (car pa) (car pa)
-                        (lcm:geo-dist (car pa) (car pa) pts-a pts-b)
-                        "им€"))
+          (progn
+            (setq mappings
+              (append mappings
+                (list
+                  (list (cons 'from (car pa)) (cons 'to (car pa)))
+                )
+              )
+            )
+            (setq details
+              (append details
+                (list (list (car pa) (car pa) d "им€"))
+              )
+            )
+            (setq used-a (cons (car pa) used-a))
+            (setq used-b (cons (car pa) used-b))
           )
         )
-        (setq used-a (cons (car pa) used-a))
-        (setq used-b (cons (car pa) used-b))
       )
     )
   )
@@ -634,18 +704,8 @@
       (setq suggest nil)
       (if lcm:diag-scan-layer
         (progn
-          (setq min-a
-            (lcm:geo-min-spacing
-              (lcm:geo-unique
-                (lcm:geo-points (nth 2 (lcm:diag-scan-layer layer-a)))
-                (lcm:geo-name-counts
-                  (lcm:geo-points (nth 2 (lcm:diag-scan-layer layer-a)))))))
-          (setq min-b
-            (lcm:geo-min-spacing
-              (lcm:geo-unique
-                (lcm:geo-points (nth 2 (lcm:diag-scan-layer layer-b)))
-                (lcm:geo-name-counts
-                  (lcm:geo-points (nth 2 (lcm:diag-scan-layer layer-b)))))))
+          (setq min-a (lcm:geo-spacing-base layer-a))
+          (setq min-b (lcm:geo-spacing-base layer-b))
           (if (and min-a min-b)
             (setq suggest (* lcm:geo-r-factor (min min-a min-b)))
           )
@@ -653,7 +713,7 @@
       )
 
       (if suggest
-        (prompt (strcat "\nLCM: минимальное рассто€ние между сосед€ми: A "
+        (prompt (strcat "\nLCM: опорное рассто€ние до соседей (p05): A "
                         (lcm:diag-num min-a 3) ", B " (lcm:diag-num min-b 3)))
       )
 
