@@ -98,6 +98,9 @@
   ;; Diagnostics module (stage 0): LCMSTATS, LCMDUMP, LCMDIAGPAIR
   (lcm:load-module "lcm_diag.lsp")
 
+  ;; Coordinate matching module (stage 1): LCMGEOFILL
+  (lcm:load-module "lcm_geo.lsp")
+
   (princ)
 )
 

@@ -915,4 +915,5 @@
 )
 
 
+(princ "\n=== LCM Diagnostics loaded: LCMSTATS, LCMDUMP, LCMDIAGPAIR ===")
 (princ)
