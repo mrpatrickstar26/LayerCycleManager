@@ -1014,6 +1014,7 @@
   (action_tile "remove_map" "(lcm:ui-remove-map)")
   (action_tile "auto_map" "(lcm:ui-auto-map)")
   (action_tile "clear_map" "(lcm:ui-clear-map)")
+  (action_tile "geo_fill" "(lcm:ui-geo-fill)")
 
   (action_tile "accept" "(progn (lcm:ui-save-session) (lcm:ui-accept))")
   (action_tile "minimize" "(progn (lcm:ui-save-session) (done_dialog 2))")
@@ -1034,6 +1035,117 @@
     ((= result 2)
      (prompt "\nLCM: диалог свёрнут. Чертеж активен.")
      (prompt "\nLCM: вернитесь командой LCM или кнопкой на ленте.")
+    )
+  )
+
+  (princ)
+)
+
+
+;;; ------------------------------------------------------------
+;;; Coordinate matching: fill gaps by coordinates
+;;; ------------------------------------------------------------
+
+(defun lcm:ui-map-has-from (name maps / found)
+  (setq found nil)
+  (foreach m maps
+    (if (and (not found) (= (cdr (assoc 'from m)) name))
+      (setq found T)
+    )
+  )
+  found
+)
+
+
+;;; Добавить найденные пары в список диалога.
+;;; Существующие пары сохраняются; строки <not found> заменяются
+;;; найденной парой; новые пары добавляются в конец.
+(defun lcm:ui-geo-merge (mappings / result m from to new)
+  (setq result '())
+
+  (foreach m lcm:maps
+    (setq from (cdr (assoc 'from m)))
+    (setq to (cdr (assoc 'to m)))
+    (setq new
+      (assoc from
+        (mapcar
+          (function (lambda (x) (cons (cdr (assoc 'from x)) x)))
+          mappings
+        )
+      )
+    )
+    (if (and new (= to lcm:placeholder))
+      (setq result (append result (list (cdr new))))
+      (setq result (append result (list m)))
+    )
+  )
+
+  (foreach m mappings
+    (setq from (cdr (assoc 'from m)))
+    (if (not (lcm:ui-map-has-from from result))
+      (setq result (append result (list m)))
+    )
+  )
+
+  (setq lcm:maps result)
+  (lcm:ui-fill-mappings)
+  (princ)
+)
+
+
+;;; Кнопка "Дополнить по координатам"
+(defun lcm:ui-geo-fill
+  (
+    /
+    layer-zero layer-last r-in r-use match mappings review
+  )
+
+  (setq layer-zero (lcm:ui-get-popup-value "layer_zero" lcm:layers))
+  (setq layer-last (lcm:ui-get-popup-value "layer_last" lcm:layers))
+
+  (cond
+
+    ((or (null layer-zero) (null layer-last))
+     (alert "LCM: сначала выберите оба слоя.")
+    )
+
+    ((= layer-zero layer-last)
+     (alert "LCM: слои должны быть разными.")
+    )
+
+    ((not lcm:diag-scan-layer)
+     (alert "LCM: не загружен модуль lcm_diag.lsp.")
+    )
+
+    ((not lcm:geo-match)
+     (alert "LCM: не загружен модуль lcm_geo.lsp.")
+    )
+
+    (T
+     (setq r-in (get_tile "geo_threshold"))
+     (setq r-use (if (and r-in (/= (vl-string-trim " " r-in) "")) (atof r-in) nil))
+     (if (and r-use (<= r-use 0.0)) (setq r-use nil))
+
+     (prompt "\nLCM: сопоставление по именам и координатам...")
+     (setq match (lcm:geo-match layer-zero layer-last r-use))
+     (setq mappings (nth 0 match))
+     (setq review (nth 1 match))
+
+     (lcm:ui-geo-merge mappings)
+
+     (if lcm:geo-write-report
+       (lcm:geo-write-report layer-zero layer-last match)
+     )
+
+     (prompt (strcat "\nLCM: пар в списке: " (itoa (length lcm:maps))
+                     " | спорных: " (itoa (length review))))
+     (if (> (length review) 0)
+       (alert
+         (strcat "LCM: спорных пар " (itoa (length review))
+                 ".\nОни не добавлены в список и не будут нарисованы."
+                 "\nПодробности - в отчёте reports/lcm_geo_*.csv")
+       )
+     )
     )
   )
 

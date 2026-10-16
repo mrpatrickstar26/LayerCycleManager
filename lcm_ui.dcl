@@ -194,6 +194,23 @@ lcm_main_dlg : dialog {
     }
 
     : row {
+      : text {
+        label = "Порог по координатам:";
+        width = 20;
+      }
+
+      : edit_box {
+        key = "geo_threshold";
+        width = 10;
+      }
+
+      : button {
+        key = "geo_fill";
+        label = "Дополнить по координатам";
+      }
+    }
+
+    : row {
       : button {
         key = "auto_map";
         label = "Авто-сопоставление";
