@@ -17,7 +17,6 @@
     (cons "LAYER_LAST" "")
     (cons "BY_LAYER" 0)
     (cons "ACI" 1)
-    (cons "DEL_LAYER" "")
     (cons "TEXT_HEIGHT" 2.5)
     (cons "SCALE" 5.0)
     (cons "TEXT_SEARCH_RADIUS" 50.0)

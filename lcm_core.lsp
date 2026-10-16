@@ -910,53 +910,5 @@
 )
 
 
-;;; ------------------------------------------------------------
-;;; Delete one object by handle
-;;; ------------------------------------------------------------
-
-(defun lcm:delete-by-handle (h / e o)
-  (if h
-    (progn
-      (setq e (handent h))
-      (if e
-        (progn
-          (setq o (vlax-ename->vla-object e))
-          (vl-catch-all-apply 'vla-Delete (list o))
-        )
-      )
-    )
-  )
-)
-
-
-;;; ------------------------------------------------------------
-;;; Delete all arrows on layer, returns count
-;;; Deletion is wrapped into one undo block
-;;; ------------------------------------------------------------
-
-(defun lcm:delete-arrows (layer-name / arrows cnt acad doc)
-
-  (setq arrows (lcm:find-arrows layer-name))
-  (setq cnt (length arrows))
-
-  (if (> cnt 0)
-    (progn
-      (setq acad (vlax-get-acad-object))
-      (setq doc (vla-get-ActiveDocument acad))
-
-      (vla-StartUndoMark doc)
-
-      (foreach a arrows
-        (lcm:delete-by-handle (nth 0 a))  ; length text
-        (lcm:delete-by-handle (nth 1 a))  ; line
-        (lcm:delete-by-handle (nth 2 a))  ; solid head
-      )
-
-      (vla-EndUndoMark doc)
-    )
-  )
-
-  cnt
-)
 
 (princ)
