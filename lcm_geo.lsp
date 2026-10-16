@@ -272,14 +272,15 @@
 ;;;   5) details    - (имя A имя B расстояние способ)
 ;;; ------------------------------------------------------------
 
-(defun lcm:geo-match
+;;; Сопоставление двух готовых списков точек (имя x y handle).
+;;; Возвращает (mappings review unmatched-a unmatched-b details r-use).
+(defun lcm:geo-match-points
   (
-    layer-a
-    layer-b
+    pts-a
+    pts-b
     r-max
     /
-    scan-a scan-b recs-a recs-b
-    pts-a pts-b counts-a counts-b
+    counts-a counts-b
     uniq-a uniq-b
     mappings details review
     used-a used-b
@@ -290,14 +291,6 @@
     unmatched-a unmatched-b
     r-use min-a min-b
   )
-
-  (setq scan-a (lcm:diag-scan-layer layer-a))
-  (setq scan-b (lcm:diag-scan-layer layer-b))
-  (setq recs-a (nth 2 scan-a))
-  (setq recs-b (nth 2 scan-b))
-
-  (setq pts-a (lcm:geo-points recs-a))
-  (setq pts-b (lcm:geo-points recs-b))
 
   (setq counts-a (lcm:geo-name-counts pts-a))
   (setq counts-b (lcm:geo-name-counts pts-b))
@@ -461,6 +454,18 @@
   )
 
   (list mappings review (reverse unmatched-a) (reverse unmatched-b) details r-use)
+)
+
+
+;;; Сопоставление двух слоёв: чтение точек и вызов lcm:geo-match-points.
+(defun lcm:geo-match (layer-a layer-b r-max / scan-a scan-b)
+  (setq scan-a (lcm:diag-scan-layer layer-a))
+  (setq scan-b (lcm:diag-scan-layer layer-b))
+  (lcm:geo-match-points
+    (lcm:geo-points (nth 2 scan-a))
+    (lcm:geo-points (nth 2 scan-b))
+    r-max
+  )
 )
 
 

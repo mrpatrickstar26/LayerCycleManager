@@ -101,6 +101,9 @@
   ;; Coordinate matching module (stage 1): LCMGEOFILL
   (lcm:load-module "lcm_geo.lsp")
 
+  ;; Cycle chain module (stage 2): LCMCHAIN
+  (lcm:load-module "lcm_chain.lsp")
+
   (princ)
 )
 
