@@ -5,7 +5,8 @@
 > ```powershell
 > iwr "https://github.com/mrpatrickstar26/LayerCycleManager/releases/latest/download/LayerCycleManager.zip" -OutFile "lcm.zip"; Expand-Archive "lcm.zip" -DestinationPath "." -Force
 > ```
->
+> **CMD**
+> 
 > ```cmd
 > curl -L -o LayerCycleManager.zip https://github.com/mrpatrickstar26/LayerCycleManager/releases/latest/download/LayerCycleManager.zip && tar -xf LayerCycleManager.zip
 > ```
