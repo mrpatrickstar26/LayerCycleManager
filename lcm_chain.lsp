@@ -435,6 +435,8 @@
             (prompt (strcat "\nLCM: отрисовка " (itoa (length pairs)) " стрелок..."))
             (lcm:run first-layer last-layer pairs scale color-mode color-data text-height)
             (setq drawn (length pairs))
+            (if lcm:check-remember
+              (lcm:check-remember first-layer last-layer pairs scale))
           )
         )
 
@@ -615,5 +617,93 @@
 )
 
 
-(princ "\n=== LCM Chain loaded: LCMCHAIN ===")
+;;; ------------------------------------------------------------
+;;; Слои между LAYER_ZERO и LAYER_LAST из настроек
+;;; ------------------------------------------------------------
+
+(defun lcm:chain-layers-from-settings ( / zero last base n1 n2 i name layers)
+  (setq zero (lcm:geo-setting "LAYER_ZERO" ""))
+  (setq last (lcm:geo-setting "LAYER_LAST" ""))
+
+  (if (or (= zero "") (= last ""))
+    nil
+    (progn
+      (setq base (lcm:chain-base zero))
+      (setq n1 (atoi (substr zero (1+ (strlen base)))))
+      (setq n2 (atoi (substr last (1+ (strlen base)))))
+      (setq layers '())
+      (setq i n1)
+      (while (<= i n2)
+        (setq name (strcat base (itoa i)))
+        (if (tblsearch "LAYER" name)
+          (setq layers (append layers (list name)))
+        )
+        (setq i (1+ i))
+      )
+      layers
+    )
+  )
+)
+
+
+;;; Печать сводки по цепочке
+(defun lcm:chain-print-summary (result)
+  (if result
+    (progn
+      (prompt (strcat "\nLCM: циклов пройдено: " (itoa (nth 0 result))
+                      ", точек в последнем: " (itoa (nth 1 result))
+                      ", пар: " (itoa (nth 2 result))
+                      ", нарисовано: " (itoa (nth 6 result))))
+      (prompt (strcat "\nLCM: отчёт: " (nth 7 result)))
+      (prompt (strcat "\nLCM: таблица идентичности: " (nth 8 result)))
+    )
+    (prompt "\nLCM: цепочка не выполнена.")
+  )
+  (princ)
+)
+
+
+;;; ------------------------------------------------------------
+;;; LCMAUTO: цепочка по настройкам, только отчёт (без изменений чертежа)
+;;; ------------------------------------------------------------
+
+(defun C:LCMAUTO ( / layers result)
+  (setq layers (lcm:chain-layers-from-settings))
+
+  (if (not layers)
+    (prompt "\nLCM: в настройках нет слоёв LAYER_ZERO / LAYER_LAST. Сохраните настройки командой LCM.")
+    (progn
+      (prompt (strcat "\nLCMAUTO: циклов " (itoa (length layers))
+                      ", режим только отчёт."))
+      (setq result (lcm:chain-run layers nil))
+      (lcm:chain-print-summary result)
+    )
+  )
+
+  (princ)
+)
+
+
+;;; ------------------------------------------------------------
+;;; LCMAUTODRAW: то же, но с отрисовкой стрелок
+;;; ------------------------------------------------------------
+
+(defun C:LCMAUTODRAW ( / layers result)
+  (setq layers (lcm:chain-layers-from-settings))
+
+  (if (not layers)
+    (prompt "\nLCM: в настройках нет слоёв LAYER_ZERO / LAYER_LAST. Сохраните настройки командой LCM.")
+    (progn
+      (prompt (strcat "\nLCMAUTODRAW: циклов " (itoa (length layers))
+                      ", режим с отрисовкой."))
+      (setq result (lcm:chain-run layers T))
+      (lcm:chain-print-summary result)
+    )
+  )
+
+  (princ)
+)
+
+
+(princ "\n=== LCM Chain loaded: LCMCHAIN, LCMAUTO, LCMAUTODRAW ===")
 (princ)

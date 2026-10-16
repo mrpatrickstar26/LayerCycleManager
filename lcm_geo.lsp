@@ -663,6 +663,8 @@
                               " стрелок, масштаб " (lcm:diag-num scale 2) "..."))
               (lcm:run layer-a layer-b mappings scale color-mode color-data text-height)
               (setq drawn (length mappings))
+              (if lcm:check-remember
+                (lcm:check-remember layer-a layer-b mappings scale))
             )
           )
         )

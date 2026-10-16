@@ -104,6 +104,9 @@
   ;; Cycle chain module (stage 2): LCMCHAIN
   (lcm:load-module "lcm_chain.lsp")
 
+  ;; Verification module (stage 3): LCMCHECK
+  (lcm:load-module "lcm_check.lsp")
+
   (princ)
 )
 
