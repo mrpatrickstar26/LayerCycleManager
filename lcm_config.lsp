@@ -19,7 +19,7 @@
     (cons "ACI" 1)
     (cons "TEXT_HEIGHT" 2.5)
     (cons "SCALE" 5.0)
-    (cons "TEXT_SEARCH_RADIUS" 2.0)
+    (cons "TEXT_SEARCH_RADIUS" 8.0)
   )
 )
 

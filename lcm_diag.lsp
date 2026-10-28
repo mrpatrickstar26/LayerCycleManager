@@ -29,7 +29,7 @@
 ;;; ------------------------------------------------------------
 
 (if (not lcm:text-search-radius)
-  (setq lcm:text-search-radius 2.0)
+  (setq lcm:text-search-radius 8.0)
 )
 
 (if (not lcm:unnamed-point-prefix)
