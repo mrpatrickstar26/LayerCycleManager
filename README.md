@@ -231,6 +231,7 @@ Layer Cycle Manager
 LayerCycleManager/
 │
 ├── README.md               ; документация проекта
+├── AGENTS.md               ; правила работы для ИИ-агентов (DSH подгружает автоматически)
 ├── INSTALL.txt             ; краткая инструкция по установке и удалению
 ├── .gitignore              ; файлы и папки, исключаемые из Git
 │
