@@ -12,7 +12,7 @@
 ;;; Global program variables
 ;;; ------------------------------------------------------------
 
-(setq lcm:version "1.1.0")
+(setq lcm:version "1.2.0")
 
 ;;; Debug mode:
 ;;; T   - show module loading messages
