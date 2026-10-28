@@ -888,6 +888,7 @@
 
   ;; Fill interface
   (lcm:ui-fill-layers)
+  (set_tile "geo_threshold" "5.0")
 
   ;; If dialog was minimized earlier, restore exact session state;
   ;; otherwise restore last saved settings
@@ -995,6 +996,20 @@
 )
 
 
+;;; «ан€та ли точка последнего цикла в текущем списке сопоставлений.
+(defun lcm:ui-map-has-to (name / found)
+  (setq found nil)
+  (foreach m lcm:maps
+    (if (and (not found)
+             (/= (cdr (assoc 'to m)) lcm:placeholder)
+             (= (cdr (assoc 'to m)) name))
+      (setq found T)
+    )
+  )
+  found
+)
+
+
 ;;; “екст сообщени€ о спорных парах (первые 7 пар с рассто€ни€ми).
 (defun lcm:ui-geo-review-text (review / text i item)
   (setq text (strcat "LCM: спорных пар " (itoa (length review)) "."))
@@ -1029,11 +1044,11 @@
 )
 
 
-;;;  нопка "ƒополнить по координатам"
+;;;  нопка "по координатам"
 (defun lcm:ui-geo-fill
   (
     /
-    layer-zero layer-last r-in r-use match mappings review
+    layer-zero layer-last r-in r-use match mappings review used-from used-to before added m to
   )
 
   (setq layer-zero (lcm:ui-get-popup-value "layer_zero" lcm:layers))
@@ -1060,14 +1075,33 @@
     (T
      (setq r-in (get_tile "geo_threshold"))
      (setq r-use (if (and r-in (/= (vl-string-trim " " r-in) "")) (atof r-in) nil))
-     (if (and r-use (<= r-use 0.0)) (setq r-use nil))
+     (if (or (null r-use) (<= r-use 0.0)) (setq r-use 5.0))
 
-     (prompt "\nLCM: сопоставление по именам и координатам...")
-     (setq match (lcm:geo-match layer-zero layer-last r-use))
+     (prompt (strcat "\nLCM: поиск пар по координатам в радиусе "
+                     (rtos r-use 2 2) " единиц..."))
+
+     ;; уже зан€тые точки в списке - исключаем из поиска
+     (setq used-from '())
+     (setq used-to '())
+     (foreach m lcm:maps
+       (setq to (cdr (assoc 'to m)))
+       (if (/= to lcm:placeholder)
+         (progn
+           (setq used-from (cons (cdr (assoc 'from m)) used-from))
+           (setq used-to (cons to used-to))
+         )
+       )
+     )
+
+     (setq match
+       (lcm:geo-match-radius-layer layer-zero layer-last r-use used-from used-to))
      (setq mappings (nth 0 match))
      (setq review (nth 1 match))
 
+     (setq before (length lcm:maps))
      (lcm:ui-geo-merge mappings)
+     (setq added (- (length lcm:maps) before))
+     (prompt (strcat "\nLCM: добавлено пар по координатам: " (itoa added)))
 
      (if lcm:geo-write-report
        (lcm:geo-write-report layer-zero layer-last match)

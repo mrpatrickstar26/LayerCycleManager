@@ -182,7 +182,7 @@ lcm_main_dlg : dialog {
 
       : button {
         key = "geo_fill";
-        label = "ƒополнить по координатам";
+        label = "по координатам";
       }
     }
 

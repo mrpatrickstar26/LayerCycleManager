@@ -9,12 +9,17 @@
 ;;; но координаты близки. ѕример: "43" и "43,1" - одна и та же точка
 ;;; разных циклов.
 ;;;
-;;; ѕор€док работы:
-;;;   1) точные совпадени€ уникальных имЄн - принимаютс€ всегда;
-;;;   2) остаток сопоставл€етс€ по координатам: пара принимаетс€,
-;;;      если она взаимно ближайша€, рассто€ние не больше порога
-;;;      и второй кандидат не ближе 1.5 рассто€ни€ до лучшего;
-;;;   3) сомнительные пары не рисуютс€, а попадают в отчЄт.
+;;; ѕор€док работы ("по координатам"):
+;;;   1) дл€ каждой точки сло€ A берЄтс€ ближайша€ точка сло€ B
+;;;      в радиусе R (по умолчанию 5 единиц чертежа);
+;;;   2) если на одну точку B претендуют несколько точек A,
+;;;      побеждает пара с меньшим рассто€нием;
+;;;   3) пары по именам ("јвто-сопоставление" в диалоге) не трогаютс€:
+;;;      команда только добавл€ет недостающие пары.
+;;;
+;;; ћодуль цепочки циклов (lcm_chain.lsp) использует отдельное, более
+;;; строгое сопоставление lcm:geo-match-points: взаимно ближайший
+;;; кандидат, порог по 5-му процентилю и ограничение на второго кандидата.
 ;;;
 ;;; “ребуетс€ загруженный модуль lcm_diag.lsp (сканирование сло€).
 ;;; ƒл€ отрисовки требуетс€ lcm_core.lsp (функци€ lcm:run).
@@ -434,6 +439,126 @@
 )
 
 
+;;; –адиус поиска пары по координатам по умолчанию (единицы чертежа).
+(if (not lcm:geo-default-radius)
+  (setq lcm:geo-default-radius 5.0)
+)
+
+
+;;; ------------------------------------------------------------
+;;; ѕростое сопоставление по координатам.
+;;; ƒл€ каждой точки сло€ A берЄтс€ ближайша€ точка сло€ B в радиусе r.
+;;; ≈сли на одну точку B претендуют несколько точек A, побеждает
+;;; пара с меньшим рассто€нием.
+;;; ¬озвращает список (рассто€ние им€_A им€_B) по возрастанию рассто€ни€.
+;;; ------------------------------------------------------------
+
+(defun lcm:geo-radius-pairs (pts-a pts-b r / cands out used-a used-b p q d item)
+  (setq cands '())
+
+  (foreach p pts-a
+    (foreach q pts-b
+      (setq d
+        (distance
+          (list (nth 1 p) (nth 2 p))
+          (list (nth 1 q) (nth 2 q))
+        )
+      )
+      (if (<= d r)
+        (setq cands (cons (list d (car p) (car q)) cands))
+      )
+    )
+  )
+
+  (setq cands
+    (vl-sort cands (function (lambda (x y) (< (car x) (car y))))))
+
+  (setq out '())
+  (setq used-a '())
+  (setq used-b '())
+
+  (foreach item cands
+    (if (and (not (member (nth 1 item) used-a))
+             (not (member (nth 2 item) used-b)))
+      (progn
+        (setq used-a (cons (nth 1 item) used-a))
+        (setq used-b (cons (nth 2 item) used-b))
+        (setq out (cons item out))
+      )
+    )
+  )
+
+  (reverse out)
+)
+
+
+;;; ------------------------------------------------------------
+;;; —опоставление двух слоЄв по координатам.
+;;; ¬озвращает ту же структуру, что lcm:geo-match:
+;;;   (mappings review unmatched-a unmatched-b details r-use)
+;;; ѕри простом правиле "спорных" пар нет, review всегда пуст.
+;;; ------------------------------------------------------------
+
+(defun lcm:geo-match-radius-layer
+  (layer-a layer-b r excl-a excl-b / scan-a scan-b pts-a pts-b counts-a counts-b
+   uniq-a uniq-b r-use res item mappings details used-a used-b
+   unmatched-a unmatched-b p)
+  (setq r-use (if (and r (> r 0.0)) r lcm:geo-default-radius))
+
+  (setq scan-a (lcm:diag-scan-layer layer-a))
+  (setq scan-b (lcm:diag-scan-layer layer-b))
+  (setq pts-a (lcm:geo-points (nth 2 scan-a)))
+  (setq pts-b (lcm:geo-points (nth 2 scan-b)))
+
+  (setq counts-a (lcm:geo-name-counts pts-a))
+  (setq counts-b (lcm:geo-name-counts pts-b))
+  (setq uniq-a (lcm:geo-unique pts-a counts-a))
+  (setq uniq-b (lcm:geo-unique pts-b counts-b))
+
+  ;; уже зан€тые точки (пары по именам, ручные) в поиске не участвуют
+  (if excl-a
+    (setq uniq-a
+      (vl-remove-if (function (lambda (p) (member (car p) excl-a))) uniq-a)))
+  (if excl-b
+    (setq uniq-b
+      (vl-remove-if (function (lambda (p) (member (car p) excl-b))) uniq-b)))
+
+  (setq res (lcm:geo-radius-pairs uniq-a uniq-b r-use))
+
+  (setq mappings '())
+  (setq details '())
+  (setq used-a '())
+  (setq used-b '())
+
+  (foreach item res
+    (setq mappings
+      (append mappings
+        (list (list (cons 'from (nth 1 item)) (cons 'to (nth 2 item))))))
+    (setq details
+      (append details
+        (list (list (nth 1 item) (nth 2 item) (car item) "коорд."))))
+    (setq used-a (cons (nth 1 item) used-a))
+    (setq used-b (cons (nth 2 item) used-b))
+  )
+
+  (setq unmatched-a '())
+  (foreach p uniq-a
+    (if (not (member (car p) used-a))
+      (setq unmatched-a (cons (car p) unmatched-a))
+    )
+  )
+
+  (setq unmatched-b '())
+  (foreach p uniq-b
+    (if (not (member (car p) used-b))
+      (setq unmatched-b (cons (car p) unmatched-b))
+    )
+  )
+
+  (list mappings '() (reverse unmatched-a) (reverse unmatched-b) details r-use)
+)
+
+
 ;;; ------------------------------------------------------------
 ;;; ќтчЄт в CSV
 ;;; ------------------------------------------------------------
@@ -560,7 +685,7 @@
     (progn
       (prompt (strcat "\nLCM: сопоставление слоЄв '" layer-a "' и '" layer-b "'..."))
 
-      (setq match (lcm:geo-match layer-a layer-b r-max))
+      (setq match (lcm:geo-match-radius-layer layer-a layer-b r-max nil nil))
       (setq mappings (nth 0 match))
       (setq review (nth 1 match))
       (setq unmatched-a (nth 2 match))
