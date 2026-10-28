@@ -89,6 +89,7 @@
 | Модули программы | корень репозитория, `lcm_*.lsp`, `lcm_ui.dcl`, `lcm.cuix` | да |
 | Документация | `README.md` (разделы 7.6–7.9 — этапы 0–3), `docs/STATE.md` | да |
 | Скрипты проверок (Python) | `tools/lisp_check.py`, `tools/ref_check.py` | да |
+| Снимок прошлой сессии DSH | генерируется `tools/last_session.cjs` в `docs/LAST_SESSION.md`; читается в начале сессии по правилу из `AGENTS.md` | нет (в `.gitignore`) |
 | Отчёты работы | `reports/lcm_*.csv` | нет (в `.gitignore`) |
 | Таблица идентичности точек | `settings/lcm_aliases_<чертёж>.csv` | нет |
 | Настройки программы | `settings/lcm_settings.cfg` | нет |
