@@ -87,17 +87,6 @@
 )
 
 
-;;; Есть ли строка в списке.
-(defun lcm:chain-in-list (value lst / found)
-  (setq found nil)
-  (foreach x lst
-    (if (and (not found) (= x value))
-      (setq found T)
-    )
-  )
-  found
-)
-
 
 ;;; Найти точку по имени: (имя x y handle).
 (defun lcm:chain-find-point (name points / found)

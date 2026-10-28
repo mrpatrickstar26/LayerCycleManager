@@ -107,17 +107,6 @@
 )
 
 
-;;; Имена, встречающиеся больше одного раза.
-(defun lcm:geo-dup-names (counts / out)
-  (setq out '())
-  (foreach pair counts
-    (if (> (cdr pair) 1)
-      (setq out (cons (car pair) out))
-    )
-  )
-  (reverse out)
-)
-
 
 ;;; Точка по имени.
 (defun lcm:geo-find (name points / found)
@@ -163,30 +152,6 @@
   )
 )
 
-
-;;; Минимальное расстояние между точками одного списка.
-(defun lcm:geo-min-spacing (points / best d i j n)
-  (setq best nil)
-  (setq n (length points))
-  (setq i 0)
-  (while (< i n)
-    (setq j (1+ i))
-    (while (< j n)
-      (setq d
-        (distance
-          (list (nth 1 (nth i points)) (nth 2 (nth i points)))
-          (list (nth 1 (nth j points)) (nth 2 (nth j points)))
-        )
-      )
-      (if (or (null best) (< d best))
-        (setq best d)
-      )
-      (setq j (1+ j))
-    )
-    (setq i (1+ i))
-  )
-  best
-)
 
 
 ;;; Расстояние между точками по имени (для отчёта).
