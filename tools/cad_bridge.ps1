@@ -68,12 +68,16 @@ $Script:Cp1251  = [Text.Encoding]::GetEncoding(1251)
 # ---------------------------------------------------------------- COM / AutoCAD
 
 function Get-Acad {
-    if (-not (Get-Process acad -ErrorAction SilentlyContinue)) {
-        throw 'AutoCAD не запущен. Откройте AutoCAD 2018 с нужным чертежом и повторите.'
-    }
+    # Проверять Get-Process нельзя: в песочнице DSH список процессов урезан,
+    # и запущенный AutoCAD там не виден. Поэтому пробуем COM и объясняем ошибку.
     if (-not $Script:Acad) {
         try { $Script:Acad = [Runtime.InteropServices.Marshal]::GetActiveObject('AutoCAD.Application') }
-        catch { $Script:Acad = New-Object -ComObject AutoCAD.Application }
+        catch {
+            try { $Script:Acad = New-Object -ComObject AutoCAD.Application }
+            catch {
+                throw 'Нет связи с AutoCAD. Откройте AutoCAD 2018 с нужным чертежом и запустите скрипт с обычными правами (из ограниченного режима DSH COM недоступен).'
+            }
+        }
     }
     $Script:Acad
 }
@@ -145,9 +149,17 @@ function Invoke-Lisp {
     $text = [IO.File]::ReadAllText($result, $Script:Cp1251)
     Remove-Item -LiteralPath $result -Force -ErrorAction SilentlyContinue
 
-    $parts = $text -split '\|', 2
-    $status = $parts[0].Trim()
-    $value = if ($parts.Count -gt 1) { $parts[1].TrimEnd() } else { '' }
+    # Файл результата: первая строка "OK|" или "ERR|<сообщение>", далее — значение
+    $rawLines = $text -split "`r?`n"
+    $head = $rawLines[0]
+    $hp = $head -split '\|', 2
+    $status = $hp[0].Trim()
+    $value = if ($hp.Count -gt 1) { $hp[1] } else { '' }
+    if ($rawLines.Count -gt 1) {
+        $rest = ($rawLines[1..($rawLines.Count - 1)] -join "`n").Trim()
+        if ($rest) { $value = if ($value.Trim()) { $value + "`n" + $rest } else { $rest } }
+    }
+    $value = $value.Trim()
 
     if ($status -eq 'ERR') { throw "Ошибка LISP: $value" }
     [pscustomobject]@{ Ok = $true; Value = $value; Raw = $text.TrimEnd() }
@@ -246,22 +258,23 @@ function Get-LatestReport {
 # ---------------------------------------------------------------- verbs
 
 function Show-Status {
-    if (-not (Get-Process acad -ErrorAction SilentlyContinue)) {
-        "AutoCAD: не запущен. Откройте AutoCAD 2018 с нужным чертежом."
+    $acad = $null
+    try { $acad = Get-Acad }
+    catch {
+        "AutoCAD: нет связи. Откройте AutoCAD 2018 с нужным чертежом."
         return
     }
-    $acad = Get-Acad
     $doc = $acad.ActiveDocument
     $lcm = $null; $ver = $null
     try {
-        $r = Invoke-Lisp '(strcat (if (boundp (quote lcm:loaded)) (if lcm:loaded "1" "0") "0") "|" (if (boundp (quote lcm:version)) lcm:version "-") "|" (getvar "ACADVER"))'
-        $v = $r.Value -split '\|'
+        $r = Invoke-Lisp '(strcat (if (and (boundp (quote lcm:version)) lcm:version) "1" "0") "|" (if (boundp (quote lcm:version)) lcm:version "-") "|" (getvar "ACADVER"))'
+        $v = ($r.Value -split '\|') | ForEach-Object { $_.Trim('"') }
         $lcm = if ($v[0] -eq '1') { 'загружен' } else { 'не загружен' }
         $ver = $v[1]
     } catch { $lcm = "ошибка: $($_.Exception.Message)" }
 
     [pscustomobject]@{
-        AutoCAD   = "запущен (PID $((Get-Process acad | Select-Object -First 1).Id))"
+        AutoCAD   = 'запущен'
         Drawing   = $doc.Name
         FullPath  = $doc.FullName
         LCM       = $lcm
@@ -273,20 +286,19 @@ function Show-Status {
 function Invoke-Dump {
     $payload = @"
 (progn
- (defun __brdg-pt (o / r)
-  (setq r (vl-catch-all-apply (function (lambda () (vlax-safearray->list (vlax-variant-value (vlax-get o 'InsertionPoint)))))))
-  (if (vl-catch-all-error-p r) (setq r (vl-catch-all-apply (function (lambda () (vlax-safearray->list (vlax-variant-value (vlax-get o 'Coordinates))))))))
-  (if (vl-catch-all-error-p r) (setq r (vl-catch-all-apply (function (lambda () (vlax-safearray->list (vlax-variant-value (vlax-get o 'Center))))))))
-  (if (vl-catch-all-error-p r) nil r))
- (setq __ff (open "OUT" "w"))
- (vlax-for o (vla-get-modelspace (vla-get-activedocument (vlax-get-acad-object)))
-  (setq __p (__brdg-pt o) __x "" __y "" __z "")
-  (if __p (progn (setq __x (rtos (car __p) 2 4) __y (rtos (cadr __p) 2 4))
-                 (if (caddr __p) (setq __z (rtos (caddr __p) 2 4)))))
-  (write-line
-   (strcat (vla-get-objectname o) "|" (vla-get-layer o) "|" (vla-get-handle o) "|"
-           __x "|" __y "|" __z "|"
-           (if (vlax-property-available-p o 'TextString) (vla-get-textstring o) "")) __ff))
+ (setq __ff (open "OUT" "w") __ss (ssget "_X" (list (cons 410 "Model"))))
+ (if __ss
+  (progn
+   (setq __i 0)
+   (while (< __i (sslength __ss))
+    (setq __e (entget (ssname __ss __i)) __i (1+ __i))
+    (setq __p (cdr (assoc 10 __e)) __t (cdr (assoc 1 __e)))
+    (write-line
+     (strcat (cdr (assoc 0 __e)) "|" (cdr (assoc 8 __e)) "|" (cdr (assoc 5 __e)) "|"
+             (if __p (rtos (car __p) 2 4) "") "|"
+             (if __p (rtos (cadr __p) 2 4) "") "|"
+             (if (and __p (caddr __p)) (rtos (caddr __p) 2 4) "") "|"
+             (if __t __t "")) __ff))))
  (close __ff) (princ))
 "@
     $outPath = New-ResultPath
@@ -310,10 +322,12 @@ function Invoke-Dump {
         if (-not $line) { continue }
         $f = $line -split '\|', 7
         if ($f.Count -lt 7) { continue }
+        # AutoCAD пишет точку как десятичный разделитель (119103.0000), независимо от локали
+        $inv = [Globalization.CultureInfo]::InvariantCulture
         $x = 0.0; $y = 0.0; $z = 0.0
-        $null = [double]::TryParse(($f[3] -replace ',', '.'), [Globalization.NumberStyles]::Float, $null, [ref]$x)
-        $null = [double]::TryParse(($f[4] -replace ',', '.'), [Globalization.NumberStyles]::Float, $null, [ref]$y)
-        $null = [double]::TryParse(($f[5] -replace ',', '.'), [Globalization.NumberStyles]::Float, $null, [ref]$z)
+        $null = [double]::TryParse($f[3], [Globalization.NumberStyles]::Float, $inv, [ref]$x)
+        $null = [double]::TryParse($f[4], [Globalization.NumberStyles]::Float, $inv, [ref]$y)
+        $null = [double]::TryParse($f[5], [Globalization.NumberStyles]::Float, $inv, [ref]$z)
         [pscustomobject]@{ Type = $f[0]; Layer = $f[1]; Handle = $f[2]; X = $x; Y = $y; Z = $z; Text = $f[6] }
     }
 
@@ -331,18 +345,46 @@ function Invoke-Dump {
 }
 
 function Get-LayerTable {
-    $r = Invoke-Lisp '(progn (setq __l (list)) (vlax-for L (vla-get-layers (vla-get-activedocument (vlax-get-acad-object))) (setq __l (cons (strcat (vla-get-name L) "|" (itoa (vla-get-color L)) "|" (if (= (vla-get-frozen L) :vlax-true) "1" "0") "|" (if (= (vla-get-locked L) :vlax-true) "1" "0") "|" (if (= (vla-get-layeron L) :vlax-true) "1" "0")) __l))) __l)'
-    if ($PrintLisp) { Write-Output $r; return }
-    # Результат — список строк в одном значении; при большом числе слоёв читаем из файла дампа.
-    $rows = $r.Value -split '\s+(?=")' | Where-Object { $_.Trim() } | ForEach-Object {
-        $p = $_.Trim('"()') -split '\|'
-        if ($p.Count -lt 5) { return }
+    $outPath = New-ResultPath
+    $payload = @"
+(progn
+ (setq __ff (open "OUT" "w") __x (tblnext "LAYER" T))
+ (while __x
+  (setq __n (cdr (assoc 2 __x)) __c (cdr (assoc 62 __x)) __f (cdr (assoc 70 __x)))
+  (write-line
+   (strcat __n "|" (itoa __c) "|" (itoa (logand __f 1)) "|" (itoa (logand __f 4)) "|" (if (< __c 0) "0" "1"))
+   __ff)
+  (setq __x (tblnext "LAYER")))
+ (close __ff) (princ))
+"@
+    $payload = $payload.Replace('"OUT"', '"' + ($outPath -replace '\\', '/') + '"') -replace "`r?`n", ' '
+
+    if ($PrintLisp) { Write-Output $payload; return }
+
+    Assert-Idle
+    (Get-AcadDoc).SendCommand($payload.Trim() + ' ')
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    while (-not (Test-Path $outPath)) {
+        if ((Get-Date) -gt $deadline) { throw 'Таблица слоёв не получена: AutoCAD занят.' }
+        Start-Sleep -Milliseconds 150
+    }
+
+    $lines = [IO.File]::ReadAllLines($outPath, $Script:Cp1251)
+    Remove-Item -LiteralPath $outPath -Force -ErrorAction SilentlyContinue
+
+    foreach ($line in $lines) {
+        if (-not $line) { continue }
+        $p = $line -split '\|', 5
+        if ($p.Count -lt 5) { continue }
         [pscustomobject]@{
-            Layer  = $p[0]; Color = [int]$p[1]
-            Frozen = ($p[2] -eq '1'); Locked = ($p[3] -eq '1'); On = ($p[4] -eq '1')
+            Layer  = $p[0]
+            Color  = [int]$p[1]
+            Frozen = ($p[2] -eq '1')
+            Locked = ($p[3] -eq '1')
+            On     = ($p[4] -eq '1')
         }
     }
-    $rows | Sort-Object Layer
 }
 
 function Save-Screenshot {
@@ -403,7 +445,8 @@ try {
             if (-not $Arg) { throw 'Укажите LISP-выражение: cad_bridge.ps1 eval "<выражение>"' }
             if ($PrintLisp) { Invoke-Lisp -Expression $Arg -Timeout $TimeoutSec; return }
             $r = Invoke-Lisp -Expression $Arg -Timeout $TimeoutSec
-            $r.Raw
+            # LISP печатает строки в кавычках — снимаем их для читаемости
+            if ($r.Value -match '^"(.*)"$' -and $r.Value -notmatch '\\"') { $Matches[1] } else { $r.Value }
         }
 
         'load' {
@@ -411,7 +454,7 @@ try {
             $path = Format-LispPath $Arg
             if ($PrintLisp) { Invoke-Lisp -Expression "(load `"$path`")" -Timeout $TimeoutSec; return }
             $r = Invoke-Lisp -Expression "(load `"$path`")" -Timeout $TimeoutSec
-            "Загружено: $path`n$($r.Raw)"
+            "Загружено: $path`n$($r.Value)"
         }
 
         'dump' { Invoke-Dump }
