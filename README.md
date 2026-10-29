@@ -255,7 +255,8 @@ LayerCycleManager/
 ├── tools/
 │   ├── lisp_check.py       ; проверка баланса скобок и строк в .lsp (AutoCAD не нужен)
 │   ├── ref_check.py        ; проверка вызовов несуществующих функций
-│   └── last_session.cjs    ; снимок последних реплик прошлой сессии DSH → docs/LAST_SESSION.md
+│   ├── last_session.cjs    ; снимок последних реплик прошлой сессии DSH → docs/LAST_SESSION.md
+│   └── cad_bridge.ps1      ; мост DSH ↔ AutoCAD: eval/load/dump/layers/shot/cmd/undo/cuix/report
 │
 ├── icons/
 │   └── arrow.png           ; исходник иконки кнопки (215×215)
