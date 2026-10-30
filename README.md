@@ -431,21 +431,28 @@ lcm_main_dlg
   ```text
   Стрелки
   ```
-- кнопку запуска со стилем:
+- две кнопки со стилем:
   ```text
   Большой с текстом (вертикально)
   ```
-- встроенную иконку кнопки (исходник 215×215);
+  - «Отрисовка стрелок» — команда `LCM`, своя иконка (исходник `icons/arrow.png`, 215×215, встроена в CUIX);
+  - «Ведомость отклонений» — команда `LCMDEV`, встроенная иконка таблицы AutoCAD (`RCDATA_16_TABLE_DATA` / `RCDATA_32_TABLE_DATA`);
 - пульдаун-меню:
   ```text
   Меню → Layer Cycle Manager
   ```
 
-Макрос кнопки:
+Макросы кнопок:
 
 ```text
+; «Отрисовка стрелок» (LCM)
 ^C^C^P(if (not lcm:loaded)(progn (if (findfile "lcm_main.lsp")(load "lcm_main.lsp")(alert "LCM: файл lcm_main.lsp не найден. Добавьте папку LayerCycleManager в Support File Search Path."))));LCM;
+
+; «Ведомость отклонений» (LCMDEV)
+^C^C^P(if (not lcm:loaded)(progn (if (findfile "lcm_main.lsp")(load "lcm_main.lsp")(alert "LCM: файл lcm_main.lsp не найден."))))^P(if (not c:LCMDEV)(load "lcm_table.lsp"));LCMDEV;
 ```
+
+После изменения `lcm.cuix` интерфейс перезагружается через `_MENUUNLOAD` → `_MENULOAD` либо перезапуском AutoCAD.
 
 ---
 
