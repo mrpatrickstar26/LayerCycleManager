@@ -25,7 +25,7 @@ node tools/last_session.cjs --limit 20   # больше реплик
 
 | Файлы | Кодировка |
 |---|---|
-| `lcm_ui.lsp`, `lcm_ui.dcl`, `lcm_diag.lsp`, `lcm_geo.lsp`, `lcm_chain.lsp`, `lcm_check.lsp` | **Windows-1251** |
+| `lcm_ui.lsp`, `lcm_ui.dcl`, `lcm_diag.lsp`, `lcm_geo.lsp`, `lcm_chain.lsp`, `lcm_check.lsp`, `lcm_table.lsp` | **Windows-1251** |
 | `lcm_main.lsp`, `lcm_data.lsp`, `lcm_core.lsp`, `lcm_config.lsp` | UTF-8 (кириллицы в них нет) |
 | `README.md`, `docs/*.md`, `AGENTS.md`, `tools/*.py` | UTF-8 |
 
@@ -98,6 +98,7 @@ python tools/ref_check.py               # вызовы несуществующ�
 | `LCMGEOFILL` | сопоставление пары слоёв по координатам в радиусе (по умолчанию 5) |
 | `LCMCHAIN` / `LCMAUTO` / `LCMAUTODRAW` | цепочка циклов: с вопросами / по настройкам с отчётом / с отрисовкой |
 | `LCMCHECK` | проверка отрисованного: длины стрелок и пересечения пар |
+| `LCMDEV` | ведомость отклонений: таблица пар точек двух слоёв в чертеже (`lcm_table.lsp`, слой `LCM_ВЕДОМОСТЬ`) |
 | `LCMRELOAD` | перезагрузка модулей после правок |
 
 ## Где что искать

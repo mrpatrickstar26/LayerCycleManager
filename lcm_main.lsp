@@ -107,6 +107,9 @@
   ;; Verification module (stage 3): LCMCHECK
   (lcm:load-module "lcm_check.lsp")
 
+  ;; Deviation statement table: LCMDEV
+  (lcm:load-module "lcm_table.lsp")
+
   (princ)
 )
 
