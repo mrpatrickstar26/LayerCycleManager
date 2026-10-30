@@ -66,6 +66,40 @@
   (strcat (if pos (substr layer (1+ pos)) layer) " " (lcm:dev-date))
 )
 ;;; ------------------------------------------------------------
+;;; ѕары берутс€ из последнего отчЄта LCM Ч того, что записан после
+;;; LCMCHAIN / LCMAUTO / LCMAUTODRAW / LCMGEOFILL. Ёто ровно те пары,
+;;; которые LCM нарисовал (или отобрал дл€ отрисовки).
+;;; ------------------------------------------------------------
+
+;;; ------------------------------------------------------------
+;;; ѕары, которые LCM запомнил при отрисовке (lcm:check-remember).
+;;; Ёто ровно те стрелки, что нарисованы в чертеже, поэтому таблица
+;;; и отрисовка всегда согласованы.
+;;; ¬озвращает (рассто€ние им€A им€B).
+;;; ------------------------------------------------------------
+
+(defun lcm:dev-remembered (layer-a layer-b pts-a pts-b / out m na nb pa pb)
+  (if (and (boundp (quote lcm:last-mappings)) lcm:last-mappings
+           (boundp (quote lcm:last-layer-a)) lcm:last-layer-a
+           (boundp (quote lcm:last-layer-b)) lcm:last-layer-b
+           (= (strcase lcm:last-layer-a) (strcase layer-a))
+           (= (strcase lcm:last-layer-b) (strcase layer-b)))
+    (foreach m lcm:last-mappings
+      (setq na (cdr (assoc (quote from) m)))
+      (setq nb (cdr (assoc (quote to) m)))
+      (setq pa (lcm:dev-find na pts-a))
+      (setq pb (lcm:dev-find nb pts-b))
+      (if (and pa pb)
+        (setq out (cons (list (distance (list (nth 1 pa) (nth 2 pa))
+                                        (list (nth 1 pb) (nth 2 pb)))
+                              na nb)
+                        out))
+      )
+    )
+  )
+  out
+)
+;;; ------------------------------------------------------------
 ;;; ќтрисовка таблицы
 ;;; ------------------------------------------------------------
 
@@ -187,7 +221,11 @@
     ((null pts-a) (princ (strcat "\nLCM: на слое нет точек: " layer-a)) nil)
     ((null pts-b) (princ (strcat "\nLCM: на слое нет точек: " layer-b)) nil)
     (T
-     (setq pairs (lcm:dev-sort (lcm:geo-radius-pairs pts-a pts-b r)))
+     ;; ѕары, запомненные LCM при отрисовке стрелок,
+     ;; запасной вариант Ч ближайша€ точка в радиусе
+     (setq pairs (lcm:dev-remembered layer-a layer-b pts-a pts-b))
+     (if (null pairs) (setq pairs (lcm:geo-radius-pairs pts-a pts-b r)))
+     (setq pairs (lcm:dev-sort pairs))
      (if (null pairs)
        (progn (princ (strcat "\nLCM: в радиусе " (rtos r 2 1) " пар не найдено")) nil)
        (progn
