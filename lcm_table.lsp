@@ -15,7 +15,7 @@
 (defun lcm:dev-col-width () (* 4.5 (lcm:dev-text-height)))
 
 ;;; Допуск примыкания отрезка к точке (единицы чертежа)
-(defun lcm:dev-tolerance () 1.0)
+(defun lcm:dev-tolerance () 0.1)
 
 (defun lcm:dev-radius (r)
   (cond
@@ -113,7 +113,7 @@
 ;;; Возвращает список (имя dXмм dYмм Dмм)
 ;;; ------------------------------------------------------------
 
-(defun lcm:dev-from-arrows (layer-a layer-b pts-a tol / lines texts out ln st en vx vy len d pa)
+(defun lcm:dev-from-arrows (layer-a layer-b pts-a tol / lines texts out ln st en vx vy len d pa best bp bd dist)
   (setq lines (lcm:dev-lines layer-b))
   (setq texts (lcm:dev-texts layer-b))
   (foreach ln lines
@@ -123,12 +123,17 @@
     (setq len (sqrt (+ (* vx vx) (* vy vy))))
     (if (> len 1.0e-9)
       (progn
-        (setq d (lcm:dev-arrow-length en texts))
-        (if (null d) (setq d (* 1000.0 (/ len (lcm:dev-scale)))))
+        ;; Ближайшая точка слоя A к началу отрезка — и только она получает пару
+        (setq best nil bp nil bd tol)
         (foreach pa pts-a
-          (if (and (null (assoc (car pa) out))
-                   (< (distance (list (nth 1 pa) (nth 2 pa)) (list (car st) (cadr st))) tol))
-            (setq out (cons (list (car pa)
+          (setq dist (distance (list (nth 1 pa) (nth 2 pa)) (list (car st) (cadr st))))
+          (if (< dist bd) (setq bd dist bp pa))
+        )
+        (if bp
+          (progn
+            (setq d (lcm:dev-arrow-length en texts))
+            (if (null d) (setq d (* 1000.0 (/ len (lcm:dev-scale)))))
+            (setq out (cons (list (car bp)
                                   (* d (/ vx len))
                                   (* d (/ vy len))
                                   d) out))
