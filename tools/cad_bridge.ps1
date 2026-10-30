@@ -68,18 +68,21 @@ $Script:Cp1251  = [Text.Encoding]::GetEncoding(1251)
 # ---------------------------------------------------------------- COM / AutoCAD
 
 function Get-Acad {
-    # Проверять Get-Process нельзя: в песочнице DSH список процессов урезан,
-    # и запущенный AutoCAD там не виден. Поэтому пробуем COM и объясняем ошибку.
-    if (-not $Script:Acad) {
-        try { $Script:Acad = [Runtime.InteropServices.Marshal]::GetActiveObject('AutoCAD.Application') }
-        catch {
-            try { $Script:Acad = New-Object -ComObject AutoCAD.Application }
-            catch {
-                throw 'Нет связи с AutoCAD. Откройте AutoCAD 2018 с нужным чертежом и запустите скрипт с обычными правами (из ограниченного режима DSH COM недоступен).'
-            }
+    # ВАЖНО: New-Object -ComObject AutoCAD.Application НЕ используется ни в каком виде —
+    # если AutoCAD занят, он молча запускает второй экземпляр с пустым «Чертеж1.dwg»
+    # и все вызовы начинают уходить в чужое окно. Подключаемся только к уже открытому.
+    if ($Script:Acad) { return $Script:Acad }
+    $lastError = $null
+    for ($i = 0; $i -lt 8; $i++) {
+        try {
+            $Script:Acad = [Runtime.InteropServices.Marshal]::GetActiveObject('AutoCAD.Application')
+            return $Script:Acad
+        } catch {
+            $lastError = $_
+            Start-Sleep -Milliseconds 400
         }
     }
-    $Script:Acad
+    throw "Нет связи с AutoCAD ($($lastError.Exception.Message)). Новый экземпляр намеренно не запускается: проверьте, что AutoCAD открыт с нужным чертежом, закройте лишние окна AutoCAD и повторите."
 }
 
 function Get-AcadDoc {
@@ -88,8 +91,23 @@ function Get-AcadDoc {
     $doc
 }
 
+function Invoke-ComRetry {
+    # AutoCAD отклоняет COM-вызовы, пока занят (RPC_E_CALL_REJECTED) — это временно.
+    param([Parameter(Mandatory = $true)][scriptblock]$Action, [int]$Attempts = 8)
+    $last = $null
+    for ($i = 0; $i -lt $Attempts; $i++) {
+        try { return (& $Action) }
+        catch {
+            $last = $_
+            if ($_.Exception.Message -notmatch 'RPC_E_CALL_REJECTED|rejected by callee|0x80010001') { throw }
+            Start-Sleep -Milliseconds 500
+        }
+    }
+    throw $last.Exception
+}
+
 function Assert-Idle {
-    $ca = (Get-AcadDoc).GetVariable('CMDACTIVE')
+    $ca = Invoke-ComRetry { (Get-AcadDoc).GetVariable('CMDACTIVE') }
     if ($ca -ne 0) { throw "AutoCAD занят командой (CMDACTIVE=$ca). Дождитесь завершения и повторите." }
 }
 
@@ -136,7 +154,7 @@ function Invoke-Lisp {
 
     Assert-Idle
     $doc = Get-AcadDoc
-    $doc.SendCommand(($payload.Trim() + ' '))
+    Invoke-ComRetry { $doc.SendCommand(($payload.Trim() + ' ')) }
 
     $deadline = (Get-Date).AddSeconds($Timeout)
     while (-not (Test-Path $result)) {
@@ -169,7 +187,7 @@ function Send-AcadCommand {
     param([Parameter(Mandatory = $true)][string]$Command, [switch]$Wait)
     Assert-Idle
     $doc = Get-AcadDoc
-    $doc.SendCommand(($Command.Trim() + ' '))
+    Invoke-ComRetry { $doc.SendCommand(($Command.Trim() + ' ')) }
     if ($Wait) {
         $deadline = (Get-Date).AddSeconds($TimeoutSec)
         while ($doc.GetVariable('CMDACTIVE') -ne 0) {
@@ -307,7 +325,7 @@ function Invoke-Dump {
     if ($PrintLisp) { Write-Output $payload; return }
 
     Assert-Idle
-    (Get-AcadDoc).SendCommand($payload.Trim() + ' ')
+    Invoke-ComRetry { (Get-AcadDoc).SendCommand($payload.Trim() + ' ') }
 
     $deadline = (Get-Date).AddSeconds([Math]::Max($TimeoutSec, 60))
     while (-not (Test-Path $outPath)) {
@@ -362,7 +380,7 @@ function Get-LayerTable {
     if ($PrintLisp) { Write-Output $payload; return }
 
     Assert-Idle
-    (Get-AcadDoc).SendCommand($payload.Trim() + ' ')
+    Invoke-ComRetry { (Get-AcadDoc).SendCommand($payload.Trim() + ' ') }
 
     $deadline = (Get-Date).AddSeconds($TimeoutSec)
     while (-not (Test-Path $outPath)) {
@@ -408,9 +426,13 @@ namespace Bridge {
         [DllImport("user32.dll")] static extern bool PrintWindow(IntPtr hWnd, IntPtr hdc, uint flags);
         [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hWnd);
         [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+        [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+        [DllImport("user32.dll")] static extern bool IsIconic(IntPtr hWnd);
 
         public static void Capture(int handle, string path) {
             IntPtr hwnd = new IntPtr(handle);
+            // Свёрнутое окно PrintWindow снимает как иконку (160x28) — разворачиваем
+            if (IsIconic(hwnd)) { ShowWindow(hwnd, 9); System.Threading.Thread.Sleep(600); }
             SetForegroundWindow(hwnd);
             System.Threading.Thread.Sleep(300);
             RECT r; GetWindowRect(hwnd, out r);

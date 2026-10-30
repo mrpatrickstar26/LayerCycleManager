@@ -1,20 +1,19 @@
 ;;; ------------------------------------------------------------
 ;;; lcm_table.lsp — ведомость отклонений Layer Cycle Manager
-;;; Строит таблицу отклонений по парам точек двух циклов.
+;;; Оформление повторяет таблицу из «Уч. 6 шпунт.xlsx»:
+;;;   № марки | ??X | ??Y | D
+;;;   «Смещение по x и y (мм)» — объединённый заголовок,
+;;;   под ним строка цикла.
 ;;; Команда: LCMDEV.  Функция: (lcm:dev-table layer-a layer-b radius)
 ;;; Кодировка файла: Windows-1251 (AutoCAD читает .lsp как ANSI)
 ;;; ------------------------------------------------------------
 
 (vl-load-com)
 
-;;; ------------------------------------------------------------
-;;; Значения по умолчанию
-;;; ------------------------------------------------------------
-
-(defun lcm:dev-text-height ( / h)
-  (setq h (lcm:config-get "TEXT_HEIGHT"))
-  (if (and h (> h 0)) h 2.5)
-)
+;;; Высота текста таблицы и пропорции строк/столбцов
+(defun lcm:dev-text-height () 5.0)
+(defun lcm:dev-row-height () (* 1.2 (lcm:dev-text-height)))
+(defun lcm:dev-col-width () (* 4.5 (lcm:dev-text-height)))
 
 (defun lcm:dev-radius (r)
   (cond
@@ -25,10 +24,7 @@
   )
 )
 
-;;; ------------------------------------------------------------
 ;;; Габариты набора точек (name x y)
-;;; ------------------------------------------------------------
-
 (defun lcm:dev-bbox (pts / xmin ymin xmax ymax p x y)
   (foreach p pts
     (setq x (nth 1 p) y (nth 2 p))
@@ -40,10 +36,6 @@
   (if xmin (list xmin ymin xmax ymax))
 )
 
-;;; ------------------------------------------------------------
-;;; Поиск точки по имени
-;;; ------------------------------------------------------------
-
 (defun lcm:dev-find (name pts / found p)
   (foreach p pts
     (if (and (null found) (= (car p) name)) (setq found p))
@@ -51,37 +43,50 @@
   found
 )
 
-;;; ------------------------------------------------------------
-;;; Сортировка пар по имени точки нулевого цикла
-;;; ------------------------------------------------------------
-
 (defun lcm:dev-sort (pairs)
   (vl-sort pairs
     (function (lambda (a b) (lcm:name< (cadr a) (cadr b))))
   )
 )
 
+(defun lcm:dev-sort-pts (pts)
+  (vl-sort pts
+    (function (lambda (a b) (lcm:name< (car a) (car b))))
+  )
+)
+
+;;; Дата для строки цикла: ДД.ММ.ГГГГ
+(defun lcm:dev-date ()
+  (menucmd "M=$(edtime,$(getvar,date),DD.MO.YYYY)")
+)
+
+;;; Подпись цикла как в Excel: «Цикл 1 ДД.ММ.ГГГГ»
+(defun lcm:dev-cycle-label (layer / pos)
+  (setq pos (vl-string-search "Цикл" layer))
+  (strcat (if pos (substr layer (1+ pos)) layer) " " (lcm:dev-date))
+)
 ;;; ------------------------------------------------------------
 ;;; Отрисовка таблицы
-;;; Возвращает (таблица точка-вставки)
 ;;; ------------------------------------------------------------
 
 (defun lcm:dev-table-draw
-  (layer-a layer-b pairs pts-a pts-b
-   / acad doc ms th rh cw rows cols ins bb tbl i row p pa pb dx dy ds)
+  (layer-a layer-b pairs pts-a
+   / acad doc ms th rh cw rows cols ins bb tbl i row p pa pb rec dx dy ds
+     by-name)
 
   (setq th (lcm:dev-text-height))
-  (setq rh (* 2.2 th))
-  (setq cw (* 9.0 th))
-  (setq rows (+ 2 (length pairs)))
-  (setq cols 6)
+  (setq rh (lcm:dev-row-height))
+  (setq cw (lcm:dev-col-width))
+
+  (setq pts-a (lcm:dev-sort-pts pts-a))
+  (setq rows (+ 3 (length pts-a)))  ; 3 строки заголовка + данные
+  (setq cols 4)
 
   (setq acad (vlax-get-acad-object))
   (setq doc  (vla-get-ActiveDocument acad))
   (setq ms   (vla-get-ModelSpace doc))
 
-  ;; Вставка: справа от габаритов точек обоих слоёв
-  (setq bb (lcm:dev-bbox (append pts-a pts-b)))
+  (setq bb (lcm:dev-bbox pts-a))
   (setq ins (list (+ (nth 2 bb) (* 6.0 th)) (nth 3 bb) 0.0))
 
   (lcm:ensure-layer "LCM_ВЕДОМОСТЬ")
@@ -89,44 +94,63 @@
   (setq tbl (vla-AddTable ms (lcm:pt3 ins) rows cols rh cw))
   (vla-put-Layer tbl "LCM_ВЕДОМОСТЬ")
 
-  ;; Заголовок таблицы
-  (vla-SetText tbl 0 0 (strcat "Ведомость отклонений: " layer-a " -> " layer-b))
-  (vl-catch-all-apply 'vla-MergeCells (list tbl 0 0 0 (1- cols)))
+  ;; Строка 0 — штатный заголовок таблицы (занимает всю ширину и выводит текст).
+  ;; Строки 1–2 — шапка: «№ марки» | «Цикл …» | ??X ??Y D.
+  (vl-catch-all-apply 'vla-MergeCells (list tbl 1 0 2 1))
+  (vl-catch-all-apply 'vla-MergeCells (list tbl 1 1 1 3))
 
-  ;; Шапка
-  (vla-SetText tbl 1 0 "№")
-  (vla-SetText tbl 1 1 "Цикл 0")
-  (vla-SetText tbl 1 2 "Цикл 1")
-  (vla-SetText tbl 1 3 "dX, мм")
-  (vla-SetText tbl 1 4 "dY, мм")
-  (vla-SetText tbl 1 5 "dS, мм")
+  (vla-SetText tbl 0 0 "Смещение по x и y (мм)")
+  (vla-SetText tbl 1 0 "№ марки")
+  (vla-SetText tbl 1 1 (lcm:dev-cycle-label layer-b))
+  (vla-SetText tbl 2 1 "\\U+03A3\\U+0394X")
+  (vla-SetText tbl 2 2 "\\U+03A3\\U+0394Y")
+  (vla-SetText tbl 2 3 "D")
 
-  ;; Данные
+  ;; Высоты строк: заголовок выше, остальные компактные
+  (vl-catch-all-apply 'vla-SetRowHeight (list tbl 0 (* 2.2 th)))
+  (vl-catch-all-apply 'vla-SetRowHeight (list tbl 1 (* 1.4 th)))
+
+  ;; Карта пар: имя точки нулевого цикла -> (d имяB)
+  (setq by-name (list))
+  (foreach p pairs (setq by-name (cons (cons (cadr p) (list (car p) (caddr p))) by-name)))
+
+  ;; Данные: все марки нулевого цикла, у кого нет пары — прочерк
   (setq i 0)
-  (foreach p pairs
-    (setq row (+ 2 i))
-    (setq pa (lcm:dev-find (cadr p) pts-a))
-    (setq pb (lcm:dev-find (caddr p) pts-b))
-    (if (and pa pb)
+  (foreach pa pts-a
+    (setq row (+ 3 i))
+    (setq rec (cdr (assoc (car pa) by-name)))
+    (vla-SetText tbl row 0 (car pa))
+    (if rec
       (progn
-        (setq dx (* 1000.0 (- (nth 1 pb) (nth 1 pa))))
-        (setq dy (* 1000.0 (- (nth 2 pb) (nth 2 pa))))
-        (setq ds (* 1000.0
-                    (distance (list (nth 1 pa) (nth 2 pa))
-                              (list (nth 1 pb) (nth 2 pb)))))
-        (vla-SetText tbl row 0 (itoa (1+ i)))
-        (vla-SetText tbl row 1 (cadr p))
-        (vla-SetText tbl row 2 (caddr p))
-        (vla-SetText tbl row 3 (rtos dx 2 1))
-        (vla-SetText tbl row 4 (rtos dy 2 1))
-        (vla-SetText tbl row 5 (rtos ds 2 1))
+        (setq pb (lcm:dev-find (cadr rec) (lcm:get-points-with-names layer-b)))
+        (if pb
+          (progn
+            (setq dx (* 1000.0 (- (nth 1 pb) (nth 1 pa))))
+            (setq dy (* 1000.0 (- (nth 2 pb) (nth 2 pa))))
+            (setq ds (* 1000.0 (distance (list (nth 1 pa) (nth 2 pa))
+                                         (list (nth 1 pb) (nth 2 pb)))))
+            (vla-SetText tbl row 1 (rtos dx 2 1))
+            (vla-SetText tbl row 2 (rtos dy 2 1))
+            (vla-SetText tbl row 3 (rtos ds 2 1))
+          )
+          (progn
+            (vla-SetText tbl row 1 "-")
+            (vla-SetText tbl row 2 "-")
+            (vla-SetText tbl row 3 "-")
+          )
+        )
+      )
+      (progn
+        (vla-SetText tbl row 1 "-")
+        (vla-SetText tbl row 2 "-")
+        (vla-SetText tbl row 3 "-")
       )
     )
     (setq i (1+ i))
   )
 
-  ;; Выравнивание и высота текста во всех строках, кроме заголовка
-  (setq row 1)
+  ;; Выравнивание и высота текста во всех ячейках
+  (setq row 0)
   (while (< row rows)
     (setq i 0)
     (while (< i cols)
@@ -137,35 +161,38 @@
     (setq row (1+ row))
   )
 
+  ;; Остальные строки — компактные
+  (setq row 2)
+  (while (< row rows)
+    (vl-catch-all-apply 'vla-SetRowHeight (list tbl row (* 1.4 th)))
+    (setq row (1+ row))
+  )
+
+  ;; Первый столбец поуже
+  (vl-catch-all-apply 'vla-SetColumnWidth (list tbl 0 (* 7.0 th)))
+
   (list tbl ins)
 )
 
 ;;; ------------------------------------------------------------
 ;;; Основная функция
-;;; Возвращает (число пар точка-вставки) или nil
 ;;; ------------------------------------------------------------
 
-(defun lcm:dev-table
-  (layer-a layer-b radius / r pts-a pts-b pairs res)
-
+(defun lcm:dev-table (layer-a layer-b radius / r pts-a pts-b pairs res)
   (setq r (lcm:dev-radius radius))
   (setq pts-a (lcm:get-points-with-names layer-a))
   (setq pts-b (lcm:get-points-with-names layer-b))
 
   (cond
-    ((null pts-a)
-     (princ (strcat "\nLCM: на слое нет точек: " layer-a)) nil)
-    ((null pts-b)
-     (princ (strcat "\nLCM: на слое нет точек: " layer-b)) nil)
+    ((null pts-a) (princ (strcat "\nLCM: на слое нет точек: " layer-a)) nil)
+    ((null pts-b) (princ (strcat "\nLCM: на слое нет точек: " layer-b)) nil)
     (T
      (setq pairs (lcm:dev-sort (lcm:geo-radius-pairs pts-a pts-b r)))
      (if (null pairs)
+       (progn (princ (strcat "\nLCM: в радиусе " (rtos r 2 1) " пар не найдено")) nil)
        (progn
-         (princ (strcat "\nLCM: в радиусе " (rtos r 2 1) " пар не найдено"))
-         nil)
-       (progn
-         (setq res (lcm:dev-table-draw layer-a layer-b pairs pts-a pts-b))
-         (list (length pairs) (cadr res))
+         (setq res (lcm:dev-table-draw layer-a layer-b pairs pts-a))
+         (list (length pairs) (length pts-a) (cadr res))
        )
      )
     )
@@ -193,7 +220,8 @@
     (progn
       (setq res (lcm:dev-table a b nil))
       (if res
-        (princ (strcat "\nLCM: ведомость готова, пар: " (itoa (car res))))
+        (princ (strcat "\nLCM: ведомость готова, пар: " (itoa (car res))
+                       ", марок: " (itoa (cadr res))))
         (princ "\nLCM: ведомость не построена")
       )
     )
