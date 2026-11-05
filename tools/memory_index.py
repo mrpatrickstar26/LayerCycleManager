@@ -377,9 +377,117 @@ def build_query(query: str, prefix: bool = False, any_term: bool = False) -> str
     return joiner.join(quoted)
 
 
+# ── навигация: строка, раздел и выдача ровно нужного куска ───────────────────
+# Расход: читать файл целиком дорого (README.md — 35 тыс. символов), а нужен
+# обычно один раздел. Поэтому search сообщает строку и раздел, а show печатает
+# от заголовка раздела до следующего заголовка того же или верхнего уровня.
+
+def _file_lines(rel: str) -> list[str] | None:
+    path = ROOT / rel
+    if not path.is_file():
+        return None
+    try:
+        return read_text(path).splitlines()
+    except OSError:
+        return None
+
+
+def heading_at(lines: list[str], line_no: int) -> str:
+    """Заголовок раздела, в котором лежит строка (1-based)."""
+    for i in range(min(line_no, len(lines)) - 1, -1, -1):
+        if lines[i].startswith("#"):
+            return lines[i].lstrip("#").strip()
+    return ""
+
+
+def section_bounds(lines: list[str], line_no: int) -> tuple[int, int]:
+    """Границы markdown-раздела вокруг строки: (первая строка, последняя), 1-based."""
+    start, level = 0, 0
+    for i in range(min(line_no, len(lines)) - 1, -1, -1):
+        if lines[i].startswith("#"):
+            start = i
+            level = len(lines[i]) - len(lines[i].lstrip("#"))
+            break
+    end = len(lines)
+    if start:
+        for j in range(start + 1, len(lines)):
+            s = lines[j]
+            if s.startswith("#") and (len(s) - len(s.lstrip("#"))) <= level:
+                end = j
+                break
+    else:
+        for j in range(max(line_no, 1), len(lines)):
+            if lines[j].startswith("#"):
+                end = j
+                break
+    return start + 1, end
+
+
+def locate(rel: str, query: str) -> tuple[int, str]:
+    """Первая строка файла с любым словом запроса и её раздел."""
+    lines = _file_lines(rel)
+    if not lines:
+        return 0, ""
+    terms = [t.lower() for t in norm_yo(query).split() if t]
+    for i, line in enumerate(lines, 1):
+        low = norm_yo(line).lower()
+        if any(t in low for t in terms):
+            return i, heading_at(lines, i)
+    return 0, ""
+
+
+def _find_line(lines: list[str], needle: str, section_only: bool = False) -> int:
+    """Номер первой строки с подстрокой; section_only — искать только в заголовках."""
+    target = norm_yo(needle).lower()
+    for i, line in enumerate(lines, 1):
+        if section_only and not line.startswith("#"):
+            continue
+        if target in norm_yo(line).lower():
+            return i
+    return 0
+
+
+def show(rel: str, at: str = "", line_range: str = "",
+         max_lines: int = 160, context: int = 15,
+         section_only: bool = False) -> tuple[str, dict]:
+    """Кусок файла: раздел с попаданием, диапазон строк или начало файла."""
+    lines = _file_lines(rel)
+    if lines is None:
+        raise RuntimeError(f"файл не найден в репозитории: {rel}")
+    start, end = 1, min(len(lines), max_lines)
+    note = ""
+    if line_range:
+        a, _, b = line_range.partition(":")
+        start = max(1, int(a or 1))
+        end = min(len(lines), int(b) if b else start + max_lines - 1)
+    elif at:
+        hit = _find_line(lines, at, section_only=section_only)
+        if not hit:
+            hint = " (заголовки: --section)" if section_only else ""
+            raise RuntimeError(f"в {rel} нет строки с «{at}»{hint}")
+        head = heading_at(lines, hit)
+        if head:
+            # markdown: печатаем раздел целиком — от заголовка до следующего
+            start, end = section_bounds(lines, hit)
+            note = f"раздел «{head}», строка {hit}"
+        else:
+            # у LISP/CSV заголовков нет — окно вокруг попадания
+            start = max(1, hit - context)
+            end = min(len(lines), hit + context)
+            note = f"попадание в строке {hit}, ±{context} строк"
+    span = end - start + 1
+    if span > max_lines:
+        end = start + max_lines - 1
+        note = (note + ", " if note else "") + f"обрезано: строки {start}–{end} из {span}"
+    body = "\n".join(f"{n:4d} {lines[n - 1]}" for n in range(start, end + 1))
+    meta = {"file": rel, "from": start, "to": end,
+            "file_lines": len(lines), "note": note}
+    return body, meta
+
+
 def search(query: str, limit: int = 8, kind: str = "", folder: str = "",
            prefix: bool = False, auto_update: bool = True,
-           any_term: bool = False) -> list[dict]:
+           any_term: bool = False, raw: bool = False) -> list[dict]:
     path = db_path()
     if not path.exists():
         raise RuntimeError(f"индекс не построен ({path}) — запустите: build")
@@ -417,8 +525,8 @@ def search(query: str, limit: int = 8, kind: str = "", folder: str = "",
     if readonly:
         NOTES["readonly"] = "1"
     try:
-        rows = conn.execute(tail, [build_query(query, prefix=prefix, any_term=any_term),
-                                   *params_tail]).fetchall()
+        expr = query if raw else build_query(query, prefix=prefix, any_term=any_term)
+        rows = conn.execute(tail, [expr, *params_tail]).fetchall()
         # Живая формулировка вопроса («что решили про допуск…») не всегда
         # содержит все слова сразу — ослабляем до ИЛИ и пробуем ещё раз.
         if not rows and not any_term:
@@ -426,9 +534,20 @@ def search(query: str, limit: int = 8, kind: str = "", folder: str = "",
                                        *params_tail]).fetchall()
     finally:
         conn.close()
-    return [{"path": p, "folder": f, "kind": k, "title": t,
-             "snippet": " ".join(s.split()), "score": round(-r, 3)}
-            for p, f, k, t, s, r in rows]
+    out = []
+    for p, f, k, t, s, r in rows:
+        line, head = locate(p, query) if k != "git" else (0, "")
+        out.append({"path": p, "folder": f, "kind": k, "title": t,
+                    "snippet": " ".join(s.split()), "score": round(-r, 3),
+                    "line": line, "heading": head})
+    return out
+
+
+def _print_hit(r: dict) -> None:
+    loc = f":{r['line']}" if r.get("line") else ""
+    head = f"  [{r['heading']}]" if r.get("heading") else ""
+    print(f"{r['score']:>7}  [{r['kind']:<4}] {r['path']}{loc}{head}")
+    print(f"         {r['snippet']}")
 
 
 def status() -> dict:
@@ -482,10 +601,24 @@ def main() -> int:
     s.add_argument("--kind", default="", help="md|lsp|csv|py|ps1|git")
     s.add_argument("--folder", default="", help="ограничить папкой, напр. docs")
     s.add_argument("--prefix", action="store_true")
+    s.add_argument("--raw", action="store_true",
+                   help="передать запрос как есть (синтаксис FTS5: OR, NOT, NEAR)")
     s.add_argument("--json", action="store_true", dest="as_json")
     s.add_argument("--no-update", action="store_true")
     s.add_argument("--any", action="store_true", dest="any_term",
                    help="любое из слов (ИЛИ) вместо всех сразу")
+    p_show = sub.add_parser("show", help="показать нужный кусок файла")
+    p_show.add_argument("path", help="путь из выдачи search, напр. README.md")
+    p_show.add_argument("--at", default="",
+                        help="подстрока: печатает раздел, в котором она встретилась")
+    p_show.add_argument("--lines", default="", help="диапазон строк, напр. 40:80")
+    p_show.add_argument("--max", type=int, default=160, dest="max_lines",
+                        help="предел строк (по умолчанию 160)")
+    p_show.add_argument("--context", type=int, default=15,
+                        help="±строк вокруг попадания, если у файла нет заголовков")
+    p_show.add_argument("--section", action="store_true",
+                        help="искать --at только среди заголовков разделов")
+    p_show.add_argument("--json", action="store_true", dest="as_json")
     args = parser.parse_args()
 
     try:
@@ -495,10 +628,20 @@ def main() -> int:
             update_index()
         elif args.cmd == "status":
             print(json.dumps(status(), ensure_ascii=False, indent=2))
+        elif args.cmd == "show":
+            body, meta = show(args.path, at=args.at, line_range=args.lines,
+                              max_lines=args.max_lines, context=args.context,
+                              section_only=args.section)
+            if args.as_json:
+                print(json.dumps({"meta": meta, "text": body}, ensure_ascii=False, indent=2))
+            else:
+                if meta["note"]:
+                    print(f"# {meta['file']} — {meta['note']}", file=sys.stderr)
+                print(body)
         else:
             results = search(args.query, limit=args.limit, kind=args.kind,
-                             folder=args.folder, prefix=args.prefix,
-                             auto_update=not args.no_update)
+                             folder=args.folder, prefix=args.prefix, raw=args.raw,
+                             auto_update=not args.no_update, any_term=args.any_term)
             if NOTES.get("update"):
                 print(f"· индекс не обновлён ({NOTES['update']}); выдача может быть неполной",
                       file=sys.stderr)
@@ -508,7 +651,7 @@ def main() -> int:
                 print("ничего не найдено")
             else:
                 for r in results:
-                    print(f"{r['score']:>7}  [{r['kind']:<4}] {r['path']}\n         {r['snippet']}")
+                    _print_hit(r)
     except (ValueError, RuntimeError) as exc:
         print(f"ОШИБКА: {exc}", file=sys.stderr)
         return 1
