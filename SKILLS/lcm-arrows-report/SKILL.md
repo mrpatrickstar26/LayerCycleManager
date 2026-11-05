@@ -119,23 +119,33 @@ Copy-Item "$W\Уч. 6 шпунт.xlsx" "$W\reports\_backup_uch6_shpunt.xlsx" -Fo
 `reports/` — рабочая свалка агента: скриншоты, временный JSON, резервные копии Excel. После выполнения задачи её нужно чистить, иначе папка за несколько прогонов вырастает в мегабайты.
 
 ```powershell
-# скриншоты и временные файлы — удалить все
+# 1. скриншоты и временные файлы агента — удалить все
 Remove-Item "$W\reports\*.png" -Force -ErrorAction SilentlyContinue
 Remove-Item "$W\reports\_table_cells.json" -Force -ErrorAction SilentlyContinue
 Remove-Item "$W\reports\*.tmp" -Force -ErrorAction SilentlyContinue
+Remove-Item "$W\reports\_write_test.txt" -Force -ErrorAction SilentlyContinue
+Remove-Item "$W\reports\agent_dump*.csv" -Force -ErrorAction SilentlyContinue
 
-# резервные копии Excel — оставить только самую свежую
+# 2. резервные копии Excel — оставить только самую свежую
 Get-ChildItem "$W\reports\_backup_uch6_shpunt*.xlsx" -ErrorAction SilentlyContinue |
   Sort-Object LastWriteTime -Descending | Select-Object -Skip 1 | Remove-Item -Force
+
+# 3. отчёты LCM — оставить по одному самому свежему на каждую пару слоёв и тип
+$csv = Get-ChildItem "$W\reports\*.csv"
+$csv | Group-Object { ($_.BaseName -replace '_\d{8,14}$','') } | ForEach-Object {
+  $_.Group | Sort-Object LastWriteTime -Descending | Select-Object -Skip 1
+} | Remove-Item -Force
 ```
 
-Правила уборки:
+Правила уборки (пользователь подтвердил 05.11.2026 — **все временные файлы и отчёты удаляются при завершении работы**):
 
-1. **Удалять без вопросов:** `reports/*.png`, `reports/_table_cells.json`, `reports/*.tmp`, `reports/_write_test.txt` — это артефакты агента, восстанавливать нечего.
-2. **Резервные копии Excel:** оставлять **одну** самую свежую `_backup_uch6_shpunt*.xlsx`; предыдущие удалять.
-3. **Отчёты LCM (`reports/lcm_*.csv`) не трогать** — это рабочие отчёты проекта (`lcm_geo_*`, `lcm_chain_*`, `lcm_check_*`, `lcm_points_*`, `lcm_pair_*`), на них ссылается `AGENTS.md`. Чистить их — только по отдельной просьбе пользователя.
-4. Если отчётов накопилось много (каждый прогон пишет новый `lcm_geo_*`), предложить пользователю удалить дубли по датам, но **не удалять молча**.
-5. В отчёте о работе сообщать, сколько освободилось — это подтверждает, что уборка прошла.
+1. **Удалять без вопросов:** `reports/*.png`, `reports/_table_cells.json`, `reports/*.tmp`, `reports/_write_test.txt`, `reports/agent_dump*.csv` — это артефакты агента, восстанавливать нечего.
+2. **Резервные копии Excel:** оставлять **одну** самую свежую `_backup_uch6_shpunt*.xlsx`, предыдущие удалять.
+3. **Отчёты LCM** (`lcm_geo_*`, `lcm_chain_*`, `lcm_check_*`, `lcm_points_*`, `lcm_pair_*`) — временные: в конце работы оставить **по одному самому свежему на каждую пару слоёв и каждый тип**, дубли удалить. Полная история отчётов не нужна: они пересоздаются прогоном.
+4. Отчёты за текущую задачу, если пользователь их ещё не посмотрел, удалять не раньше, чем закончится задача (их содержимое уже перенесено в Excel/`STATE.md`).
+5. В отчёте о работе указывать, сколько файлов удалено и сколько освободилось — это подтверждает, что уборка прошла.
+
+Целевое состояние папки после уборки: **~15–20 файлов, < 50 КБ** (свежие отчёты по парам + одна резервная копия Excel).
 
 ## Правила и грабли (проверено)
 
