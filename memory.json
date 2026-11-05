@@ -20,5 +20,5 @@
     ".pytest_cache"
   ],
   "git_history": true,
-  "db_dir": ""
+  "db_dir": ".memory"
 }

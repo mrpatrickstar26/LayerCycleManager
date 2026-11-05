@@ -117,6 +117,12 @@ DB_DIR = Path(
     or (Path(os.environ.get("LOCALAPPDATA", Path.home())) / "cache" / "lcm-memory")
 )
 
+# Относительный db_dir считается от корня проекта, а не от текущего каталога:
+# иначе запуск из другого каталога увёл бы индекс в чужое место, а скопированный
+# проект потерял бы свою базу.
+if not DB_DIR.is_absolute():
+    DB_DIR = Path(__file__).resolve().parent.parent / DB_DIR
+
 # Негромкие предупреждения для CLI: «индекс не обновлён», «база только для чтения».
 NOTES: dict[str, str] = {}
 
