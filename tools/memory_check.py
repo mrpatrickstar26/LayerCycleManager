@@ -12,7 +12,10 @@
      раздел «## Детали» и упомянут в INDEX.md.
   4. memory.json разбирается как JSON и содержит обязательные ключи.
 
-Запуск: py -3 tools/memory_check.py [--json]
+Глубокая проверка (`--deep`) ловит устаревшие утверждения: упомянутые в тексте
+файлы должны существовать, символы `lcm:*` и команды `LCM*` — быть в исходниках.
+
+Запуск: py -3 tools/memory_check.py [--deep] [--json]
 Код возврата: 0 — всё в порядке, 1 — есть ошибки.
 """
 
@@ -53,6 +56,106 @@ def read(path: Path) -> str:
         return raw.decode("utf-8")
     except UnicodeDecodeError:
         return raw.decode("cp1251", errors="replace")
+
+
+SKIP_PARTS = {".git", ".memory", "reports", "__pycache__", "node_modules", ".venv", ".idea", ".vscode"}
+LOCALISH = re.compile(
+    r"(^|/)(reports|settings|\.memory)/|docs/LAST_SESSION\.md|\.(dwg|xlsx|cfg|bak|tmp|pyc)$"
+)
+MENTION_RE = re.compile(r"((?:[\w.-]+/)*[\w.-]+\.(?:lsp|dcl|py|ps1|cjs|json|md))\b")
+SYMBOL_RE = re.compile(r"\blcm:[a-z0-9][a-z0-9-]*")
+COMMAND_RE = re.compile(r"\bLCM[A-Z][A-Z0-9]{2,}\b")
+REMOVED_RE = re.compile(r"удал|убра|снят|несуществ|removed", re.IGNORECASE)
+
+
+def repo_names() -> set[str]:
+    """Имена файлов и относительные пути репозитория в нижнем регистре."""
+    names: set[str] = set()
+    for path in ROOT.rglob("*"):
+        if not path.is_file() or any(part in SKIP_PARTS for part in path.parts):
+            continue
+        names.add(path.name.lower())
+        try:
+            names.add(path.relative_to(ROOT).as_posix().lower())
+        except ValueError:
+            pass
+    return names
+
+
+def lisp_corpus() -> str:
+    """Все lcm_*.lsp одним текстом (кодировка — по содержимому)."""
+    chunks = []
+    for path in sorted(ROOT.glob("lcm_*.lsp")):
+        raw = path.read_bytes()
+        try:
+            chunks.append(raw.decode("utf-8"))
+        except UnicodeDecodeError:
+            chunks.append(raw.decode("cp1251", errors="replace"))
+    return "\n".join(chunks).lower()
+
+
+def deep_checks() -> tuple[list[str], dict[str, int]]:
+    """Сверяет упоминания в тексте памяти с фактическим содержимым репозитория.
+
+    Ссылка ищется относительно самого документа (docs/ → research/01-…md), затем
+    от корня. Строки, где речь идёт об удалённом («удалены», «убрано»), пропускаются:
+    память обязана помнить и то, чего в коде уже нет.
+    """
+    errors: list[str] = []
+    known = repo_names()
+    lisp = lisp_corpus()
+    docs = sorted((ROOT / "docs" / "research").glob("*.md"))
+    docs += [ROOT / "docs" / "STATE.md", ROOT / "docs" / "LOG.md", AGENTS]
+
+    seen: set[tuple[str, str]] = set()
+    counts = {"files": 0, "symbols": 0, "commands": 0}
+
+    def resolves(doc: Path, mention: str) -> bool:
+        if (doc.parent / mention).is_file() or (ROOT / mention).is_file():
+            return True
+        return mention.lower() in known
+
+    for doc in docs:
+        if not doc.is_file():
+            continue
+        body = read(doc)
+        rel = doc.relative_to(ROOT).as_posix()
+
+        for mention in MENTION_RE.findall(body):
+            name = mention.strip("./")
+            low = name.lower()
+            if (LOCALISH.search("/" + low) or "NN-" in name or "<" in name
+                    or low.startswith("_")):
+                continue
+            key = (rel, low)
+            if key in seen:
+                continue
+            seen.add(key)
+            counts["files"] += 1
+            if not resolves(doc, name):
+                errors.append(f"{rel}: упомянут «{name}», но такого файла нет")
+
+        for line in body.splitlines():
+            if REMOVED_RE.search(line):
+                continue
+            for symbol in sorted(set(SYMBOL_RE.findall(line))):
+                key = (rel, symbol)
+                if key in seen:
+                    continue
+                seen.add(key)
+                counts["symbols"] += 1
+                if symbol.lower() not in lisp:
+                    errors.append(f"{rel}: упомянут «{symbol}», но в lcm_*.lsp его нет")
+            for command in sorted(set(COMMAND_RE.findall(line))):
+                key = (rel, command)
+                if key in seen:
+                    continue
+                seen.add(key)
+                counts["commands"] += 1
+                if ("c:" + command).lower() not in lisp:
+                    errors.append(f"{rel}: упомянута команда «{command}», но «(defun c:{command} …)» нет")
+
+    return errors, counts
 
 
 def main() -> int:
@@ -121,12 +224,18 @@ def main() -> int:
             if key not in cfg:
                 errors.append(f"memory.json: нет ключа '{key}'")
 
+    deep_stats = None
+    if "--deep" in sys.argv[1:]:
+        deep_errors, deep_stats = deep_checks()
+        errors.extend(deep_errors)
+
     report = {
         "agents_bytes": agents_size,
         "agents_limit": LIMIT_AGENTS,
         "state_bytes": state_size,
         "research_files": len(files),
         "research_bytes": sum(p.stat().st_size for p in files),
+        "deep": deep_stats,
         "errors": errors,
         "notices": notices,
     }
@@ -136,6 +245,12 @@ def main() -> int:
         print(f"AGENTS.md   : {agents_size:>6} / {LIMIT_AGENTS} байт")
         print(f"STATE.md    : {state_size:>6} / {LIMIT_STATE} байт")
         print(f"docs/research: {len(files)} файлов, {report['research_bytes']} байт")
+        if deep_stats is not None:
+            print(
+                "deep        : файлов {}, символов {}, команд {}".format(
+                    deep_stats["files"], deep_stats["symbols"], deep_stats["commands"]
+                )
+            )
         for note in notices:
             print(f"  ~ {note}")
         if errors:

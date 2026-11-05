@@ -90,6 +90,7 @@
 | Документация | `README.md` (разделы 7.6–7.9 — этапы 0–3), `docs/STATE.md` | да |
 | Скрипты проверок (Python) | `tools/lisp_check.py`, `tools/ref_check.py` | да |
 | Память проекта (FTS5-индекс) | `tools/memory_index.py`, база в `.memory/` в корне проекта (`db_dir` в `memory.json`, переопределяется `LCM_MEMORY_DIR`) | да (код) |
+| Хронология событий | [`docs/LOG.md`](LOG.md) — по строке на событие, `grep "^## \["` | да |
 | Снимок прошлой сессии DSH | генерируется `tools/last_session.cjs` в `docs/LAST_SESSION.md`; читается в начале сессии по правилу из `AGENTS.md` | нет (в `.gitignore`) |
 | Мост к живому AutoCAD | `tools/cad_bridge.ps1` (COM → запущенный AutoCAD 2018): eval/load/dump/layers/shot/cmd/undo/cuix/report | да |
 | Отчёты работы | `reports/lcm_*.csv` | нет (в `.gitignore`) |

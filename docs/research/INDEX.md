@@ -12,3 +12,4 @@
 | [05-autolisp-pitfalls.md](05-autolisp-pitfalls.md) | грабли AutoLISP: `T`, `wcmatch`, кириллица | 30.10.2026 |
 | [06-request-cost.md](06-request-cost.md) | экономика запросов: контекст × тариф | 05.11.2026 |
 | [07-sandbox-and-permissions.md](07-sandbox-and-permissions.md) | песочница DSH, метка Low и запись в проект | 05.11.2026 |
+| [08-memory-hygiene.md](08-memory-hygiene.md) | lint памяти и хронология событий | 05.11.2026 |
