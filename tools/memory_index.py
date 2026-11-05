@@ -38,29 +38,94 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-# По умолчанию база вне репозитория. LCM_MEMORY_DIR позволяет увести её в
-# доступный на запись каталог (например, <репозиторий>\.dsh\memory в песочнице).
+
+# ── конфигурация: memory.json в корне проекта ────────────────────────────────
+# Скрипт переносимый: что индексировать и что пропускать задаётся конфигом, а не
+# кодом. Без конфига работают значения по умолчанию (они же пишутся командой
+# init), поэтому в новом проекте достаточно скопировать tools/memory_index.py
+# и выполнить `init`.
+
+CONFIG_NAME = "memory.json"
+
+DEFAULT_CONFIG = {
+    "patterns": {
+        "*.md": "md",
+        "*.lsp": "lsp",
+        "*.dcl": "dcl",
+        "*.py": "py",
+        "*.ps1": "ps1",
+        "*.cjs": "js",
+        "reports/*.csv": "csv",
+    },
+    "skip_dirs": [".git", "node_modules", "__pycache__", ".venv", "venv",
+                  ".dsh", ".idea", ".vscode", ".pytest_cache"],
+    "git_history": True,
+    "db_dir": "",
+}
+
+
+def config_path() -> Path:
+    """Путь к конфигу: LCM_MEMORY_CONFIG или memory.json в корне проекта."""
+    return Path(os.environ.get("LCM_MEMORY_CONFIG") or (ROOT / CONFIG_NAME))
+
+
+def load_config() -> dict:
+    """Значения по умолчанию, поверх них — memory.json (если он есть)."""
+    cfg = json.loads(json.dumps(DEFAULT_CONFIG))
+    path = config_path()
+    if path.is_file():
+        try:
+            # utf-8-sig: Notepad и PowerShell пишут BOM, обычный utf-8 на нём падает
+            raw = json.loads(path.read_text(encoding="utf-8-sig"))
+        except (OSError, ValueError) as exc:
+            print(f"· {path.name}: не читается ({exc}) — взяты значения по умолчанию",
+                  file=sys.stderr)
+            raw = {}
+        if isinstance(raw, dict):
+            for key in ("patterns", "skip_dirs", "git_history", "db_dir"):
+                if key in raw:
+                    cfg[key] = raw[key]
+    return cfg
+
+
+def write_default_config(force: bool = False) -> Path:
+    """Записать memory.json со значениями по умолчанию (для нового проекта)."""
+    path = config_path()
+    if path.exists() and not force:
+        raise RuntimeError(f"{path} уже существует — перезапись: init --force")
+    try:
+        path.write_text(json.dumps(DEFAULT_CONFIG, ensure_ascii=False, indent=2) + "\n",
+                        encoding="utf-8")
+    except OSError as exc:
+        raise RuntimeError(
+            f"не удалось записать {path} ({exc.__class__.__name__}: {exc}).\n"
+            "  В песочнице DSH файлы проекта правит инструмент агента, а не скрипт:\n"
+            "  создайте memory.json вручную или запустите init вне песочницы."
+        ) from exc
+    return path
+
+
+CONFIG = load_config()
+PATTERNS = dict(CONFIG["patterns"])
+SKIP_DIRS = set(CONFIG["skip_dirs"])
+
+# По умолчанию база вне репозитория. LCM_MEMORY_DIR (или db_dir в конфиге)
+# позволяет увести её в доступный на запись каталог — нужно в песочнице DSH.
 DB_DIR = Path(
     os.environ.get("LCM_MEMORY_DIR")
+    or CONFIG.get("db_dir")
     or (Path(os.environ.get("LOCALAPPDATA", Path.home())) / "cache" / "lcm-memory")
 )
 
 # Негромкие предупреждения для CLI: «индекс не обновлён», «база только для чтения».
 NOTES: dict[str, str] = {}
 
-# Что индексируем и с каким «видом»
-PATTERNS = {
-    "*.md": "md",
-    "*.lsp": "lsp",
-    "*.dcl": "dcl",
-    "*.py": "py",
-    "*.ps1": "ps1",
-    "*.cjs": "js",
-    "reports/*.csv": "csv",
-}
+# PATTERNS и SKIP_DIRS приходят из конфига (см. выше, memory.json).
 
-SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", ".dsh",
-             ".idea", ".vscode", ".pytest_cache"}
+def suffix_kinds() -> dict[str, str]:
+    """Расширение → вид, собранное из простых шаблонов вида «*.ext»."""
+    return {pat[1:].lower(): kind for pat, kind in PATTERNS.items()
+            if pat.startswith("*.") and "/" not in pat}
 
 _FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n?", re.DOTALL)
 _HEADING_RE = re.compile(r"^#{1,6}\s+(.*)$", re.MULTILINE)
@@ -234,8 +299,9 @@ def scan_disk() -> dict[str, dict]:
             })
             docs[rel_s] = parsed
     # вложенные подпапки (docs/, SKILLS/**) — отдельным проходом
+    by_suffix = suffix_kinds()
     for path in ROOT.rglob("*"):
-        if not path.is_file() or path.suffix.lower() not in (".md", ".lsp", ".py", ".ps1", ".cjs"):
+        if not path.is_file() or path.suffix.lower() not in by_suffix:
             continue
         rel = path.relative_to(ROOT)
         if any(part in SKIP_DIRS for part in rel.parts):
@@ -243,7 +309,7 @@ def scan_disk() -> dict[str, dict]:
         rel_s = str(rel).replace("\\", "/")
         if rel_s in docs:
             continue
-        kind = {".md": "md", ".lsp": "lsp", ".py": "py", ".ps1": "ps1", ".cjs": "js"}[path.suffix.lower()]
+        kind = by_suffix[path.suffix.lower()]
         try:
             st = path.stat()
         except OSError:
@@ -275,7 +341,7 @@ def update_index(full: bool = False, quiet: bool = False) -> dict:
         ensure_schema(conn)
 
         docs = scan_disk()
-        commits = git_docs()
+        commits = git_docs() if CONFIG.get("git_history", True) else []
         known = {p: (m, s) for p, m, s in
                  conn.execute("SELECT path, mtime, size FROM files WHERE kind <> 'git'")}
         git_known = {p for (p,) in conn.execute("SELECT path FROM files WHERE kind = 'git'")}
@@ -568,7 +634,9 @@ def status() -> dict:
         pass
     return {"db": str(path), "exists": True, "documents": total, "by_kind": by_kind,
             "size_kb": path.stat().st_size // 1024,
-            "last_update": last, "readonly": readonly}
+            "last_update": last, "readonly": readonly,
+            "config": str(config_path()), "patterns": len(PATTERNS),
+            "git_history": bool(CONFIG.get("git_history", True))}
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
@@ -595,6 +663,8 @@ def main() -> int:
     sub.add_parser("build", help="полная пересборка индекса")
     sub.add_parser("update", help="догон изменённых файлов")
     sub.add_parser("status", help="состояние индекса")
+    p_init = sub.add_parser("init", help="записать memory.json со значениями по умолчанию")
+    p_init.add_argument("--force", action="store_true", help="перезаписать существующий")
     s = sub.add_parser("search", help="полнотекстовый поиск")
     s.add_argument("query")
     s.add_argument("--limit", type=int, default=8)
@@ -628,6 +698,8 @@ def main() -> int:
             update_index()
         elif args.cmd == "status":
             print(json.dumps(status(), ensure_ascii=False, indent=2))
+        elif args.cmd == "init":
+            print(f"конфиг записан: {write_default_config(force=args.force)}")
         elif args.cmd == "show":
             body, meta = show(args.path, at=args.at, line_range=args.lines,
                               max_lines=args.max_lines, context=args.context,

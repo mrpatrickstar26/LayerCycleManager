@@ -29,6 +29,8 @@ node tools/last_session.cjs --limit 20   # больше реплик
 
 `tools/memory_index.py` — локальный полнотекстовый индекс по всему корпусу: `*.md`, `*.lsp`, `*.dcl`, `*.py`, `*.ps1`, `*.cjs`, `reports/*.csv` и история git. База живёт **вне репозитория** (`%LOCALAPPDATA%\cache\lcm-memory\`), зависимостей нет — только stdlib.
 
+Что индексировать и что пропускать задаётся `memory.json` в корне проекта (`patterns`, `skip_dirs`, `git_history`, `db_dir`); без файла работают те же значения по умолчанию. Скрипт переносимый: в новом проекте достаточно скопировать `tools/memory_index.py` и выполнить `py -3 tools/memory_index.py init`.
+
 ```bash
 py -3 tools/memory_index.py status              # что в индексе
 py -3 tools/memory_index.py build               # полная пересборка

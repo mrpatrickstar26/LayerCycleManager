@@ -1,0 +1,24 @@
+{
+  "patterns": {
+    "*.md": "md",
+    "*.lsp": "lsp",
+    "*.dcl": "dcl",
+    "*.py": "py",
+    "*.ps1": "ps1",
+    "*.cjs": "js",
+    "reports/*.csv": "csv"
+  },
+  "skip_dirs": [
+    ".git",
+    "node_modules",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".dsh",
+    ".idea",
+    ".vscode",
+    ".pytest_cache"
+  ],
+  "git_history": true,
+  "db_dir": ""
+}
