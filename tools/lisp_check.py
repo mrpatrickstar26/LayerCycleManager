@@ -1,6 +1,6 @@
 # Проверка баланса скобок и строк в AutoLISP-файлах.
-# Использование: python lisp_check.py <файл1.lsp> <файл2.lsp> ...
-import sys, os
+# Использование: py -3 tools/lisp_check.py lcm_*.lsp   (шаблон разворачивается и в PowerShell)
+import glob, sys, os
 
 def strip_code(text):
     out = []
@@ -51,8 +51,21 @@ def check(path):
     return ok
 
 if __name__ == "__main__":
+    # Русская Windows: Python пишет cp1251, а PowerShell 7 и терминал DSH читают
+    # UTF-8 — без этого отчёт проверки выводится мусором.
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
     bad = 0
-    for p in sys.argv[1:]:
+    # PowerShell не раскрывает шаблоны сам (в отличие от bash), поэтому
+    # `lcm_*.lsp` разворачиваем здесь — документированная команда работает в обеих оболочках.
+    paths = []
+    for arg in sys.argv[1:]:
+        matched = glob.glob(arg)
+        paths.extend(matched or [arg])
+    for p in paths:
         if not check(p):
             bad += 1
     sys.exit(1 if bad else 0)

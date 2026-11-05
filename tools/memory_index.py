@@ -6,13 +6,19 @@
 git — всё в одном индексе. Зависимостей нет: только stdlib (sqlite3).
 
 База лежит ВНЕ репозитория:
-    %USERPROFILE%\\.cache\\lcm-memory\\<slug>-<hash>.db
+    %LOCALAPPDATA%\\cache\\lcm-memory\\<slug>-<hash>.db
+Каталог можно переопределить переменной LCM_MEMORY_DIR — это нужно, когда
+запись вне рабочей папки запрещена (песочница DSH: только workspace-write).
 
-Команды:
-    python tools/memory_index.py build              # полная пересборка
-    python tools/memory_index.py update             # догон по mtime/size
-    python tools/memory_index.py status             # что в индексе
-    python tools/memory_index.py search "запрос" [--limit 8] [--kind md] [--json]
+Команды (в Windows вызывать через py -3, если python — заглушка Store):
+    py -3 tools/memory_index.py build              # полная пересборка
+    py -3 tools/memory_index.py update             # догон по mtime/size
+    py -3 tools/memory_index.py status             # что в индексе
+    py -3 tools/memory_index.py search "запрос" [--limit 8] [--kind md] [--json]
+
+Поиск и status умеют работать с базой ТОЛЬКО ДЛЯ ЧТЕНИЯ: если каталог базы
+недоступен на запись, они открывают её в режиме read-only (индекс не свежеет,
+CLI честно об этом предупреждает). Пересборка (build/update) требует записи.
 
 Кодировки: .md/.py/.cjs/.ps1 — UTF-8 (BOM или без), .lsp/.dcl — Windows-1251,
 .csv — UTF-8 с BOM (fallback 1251). Определяются по содержимому, а не по имени.
@@ -32,7 +38,15 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-DB_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "cache" / "lcm-memory"
+# По умолчанию база вне репозитория. LCM_MEMORY_DIR позволяет увести её в
+# доступный на запись каталог (например, <репозиторий>\.dsh\memory в песочнице).
+DB_DIR = Path(
+    os.environ.get("LCM_MEMORY_DIR")
+    or (Path(os.environ.get("LOCALAPPDATA", Path.home())) / "cache" / "lcm-memory")
+)
+
+# Негромкие предупреждения для CLI: «индекс не обновлён», «база только для чтения».
+NOTES: dict[str, str] = {}
 
 # Что индексируем и с каким «видом»
 PATTERNS = {
@@ -71,12 +85,55 @@ def db_path() -> Path:
     return DB_DIR / f"{slug}-{digest}.db"
 
 
-def open_db(path: Path) -> sqlite3.Connection:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path))
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")
-    return conn
+def open_db(path: Path, readonly: bool = False) -> sqlite3.Connection:
+    """Открывает базу.
+
+    readonly=True — когда каталог индекса недоступен на запись (песочница,
+    чужой профиль): SQLite открывает файл без журнала и без правки заголовка.
+    """
+    if not readonly:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(path))
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=5000")
+        return conn
+
+    last: Exception | None = None
+    for suffix in ("?mode=ro", "?mode=ro&immutable=1"):
+        try:
+            conn = sqlite3.connect("file:" + path.as_posix() + suffix, uri=True)
+            conn.execute("PRAGMA busy_timeout=5000")
+            conn.execute("SELECT count(*) FROM meta").fetchone()  # проверка, что читается
+            return conn
+        except sqlite3.Error as exc:  # WAL без прав на -shm и т.п.
+            last = exc
+    raise RuntimeError(f"не удалось открыть базу только для чтения: {last}")
+
+
+def open_read(path: Path) -> tuple[sqlite3.Connection, bool]:
+    """Открывает базу для чтения: сначала с записью, при отказе — read-only.
+
+    Возвращает (соединение, только_чтение).
+    """
+    try:
+        return open_db(path), False
+    except (sqlite3.Error, OSError):
+        return open_db(path, readonly=True), True
+
+
+def no_write_hint(path: Path, exc: Exception) -> str:
+    """Понятное объяснение, когда каталог индекса недоступен на запись."""
+    return (
+        f"нет записи в каталог индекса {path.parent} "
+        f"({exc.__class__.__name__}: {exc}).\n"
+        "  В ограниченном режиме DSH запись вне рабочей папки запрещена,\n"
+        "  а обычные процессы не пишут и внутрь неё. Варианты:\n"
+        "  1) разовое расширение доступа на саму команду (danger-full-access);\n"
+        "  2) временная база в доступном каталоге — пересборка занимает секунды:\n"
+        '       $env:LCM_MEMORY_DIR = "$env:TEMP\\lcm-memory"\n'
+        "       py -3 tools/memory_index.py build\n"
+        "  Поиск (search) и status при этом работают и с базой только для чтения."
+    )
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
@@ -207,7 +264,10 @@ def scan_disk() -> dict[str, dict]:
 
 def update_index(full: bool = False, quiet: bool = False) -> dict:
     path = db_path()
-    conn = open_db(path)
+    try:
+        conn = open_db(path)
+    except (sqlite3.Error, OSError) as exc:
+        raise RuntimeError(no_write_hint(path, exc)) from exc
     try:
         if full:
             conn.execute("DROP TABLE IF EXISTS notes_fts")
@@ -326,8 +386,13 @@ def search(query: str, limit: int = 8, kind: str = "", folder: str = "",
     if auto_update:
         try:
             update_index(quiet=True)
-        except Exception:  # noqa: BLE001 — поиск не должен падать из-за индексации
-            pass
+        except Exception as exc:  # noqa: BLE001 — поиск не должен падать из-за индексации
+            text = str(exc)
+            if "нет записи в каталог индекса" in text:
+                NOTES["update"] = "нет прав на запись базы, она открыта только для чтения"
+            else:
+                first = text.splitlines()[0]
+                NOTES["update"] = (first[:110] + "…") if len(first) > 110 else first
 
     # Документация и код важнее отчётов: у csv вес понижен, иначе 90 файлов
     # отчётов глушат markdown и lisp в выдаче.
@@ -348,7 +413,9 @@ def search(query: str, limit: int = 8, kind: str = "", folder: str = "",
     tail += " ORDER BY rank LIMIT ?"
     params_tail.append(max(1, limit))
 
-    conn = open_db(path)
+    conn, readonly = open_read(path)
+    if readonly:
+        NOTES["readonly"] = "1"
     try:
         rows = conn.execute(tail, [build_query(query, prefix=prefix, any_term=any_term),
                                    *params_tail]).fetchall()
@@ -368,21 +435,42 @@ def status() -> dict:
     path = db_path()
     if not path.exists():
         return {"db": str(path), "exists": False}
-    conn = open_db(path)
+    conn, readonly = open_read(path)
     try:
         total = conn.execute("SELECT count(*) FROM files").fetchone()[0]
         by_kind = dict(conn.execute("SELECT kind, count(*) FROM files GROUP BY kind"))
         meta = dict(conn.execute("SELECT key, value FROM meta"))
     finally:
         conn.close()
+    last = meta.get("last_update", "never")
+    try:
+        last = time.strftime("%Y-%m-%d %H:%M", time.localtime(int(last)))
+    except (TypeError, ValueError, OSError):
+        pass
     return {"db": str(path), "exists": True, "documents": total, "by_kind": by_kind,
             "size_kb": path.stat().st_size // 1024,
-            "last_update": meta.get("last_update", "never")}
+            "last_update": last, "readonly": readonly}
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
+def setup_stdout() -> None:
+    """UTF-8 для вывода.
+
+    В русской Windows Python по умолчанию пишет в консоль cp1251, а PowerShell 7
+    и терминал DSH читают вывод как UTF-8 — русский текст превращается в мусор.
+    Принудительный UTF-8 делает вывод читаемым и агенту, и человеку в Windows
+    Terminal; для классической консоли нужен `chcp 65001`.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
+
 def main() -> int:
+    setup_stdout()
     parser = argparse.ArgumentParser(description="FTS5-память проекта LayerCycleManager")
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("build", help="полная пересборка индекса")
@@ -411,6 +499,9 @@ def main() -> int:
             results = search(args.query, limit=args.limit, kind=args.kind,
                              folder=args.folder, prefix=args.prefix,
                              auto_update=not args.no_update)
+            if NOTES.get("update"):
+                print(f"· индекс не обновлён ({NOTES['update']}); выдача может быть неполной",
+                      file=sys.stderr)
             if args.as_json:
                 print(json.dumps(results, ensure_ascii=False, indent=2))
             elif not results:

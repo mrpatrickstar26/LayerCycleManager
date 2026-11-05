@@ -1,5 +1,14 @@
 import glob, os, re
 
+# Русская Windows: Python пишет в консоль cp1251, а PowerShell 7 и терминал DSH
+# читают UTF-8 — без этого русский текст выводится мусором.
+import sys
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 W = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NAME = r"[A-Za-z][A-Za-z0-9:_>!?*+<>=/-]*"
 

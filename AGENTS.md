@@ -30,10 +30,10 @@ node tools/last_session.cjs --limit 20   # больше реплик
 `tools/memory_index.py` — локальный полнотекстовый индекс по всему корпусу: `*.md`, `*.lsp`, `*.dcl`, `*.py`, `*.ps1`, `*.cjs`, `reports/*.csv` и история git. База живёт **вне репозитория** (`%LOCALAPPDATA%\cache\lcm-memory\`), зависимостей нет — только stdlib.
 
 ```bash
-python tools/memory_index.py status              # что в индексе
-python tools/memory_index.py build               # полная пересборка
-python tools/memory_index.py update              # догнать изменения
-python tools/memory_index.py search "запрос"     # поиск (--json для агента)
+py -3 tools/memory_index.py status              # что в индексе
+py -3 tools/memory_index.py build               # полная пересборка
+py -3 tools/memory_index.py update              # догнать изменения
+py -3 tools/memory_index.py search "запрос"     # поиск (--json для агента)
 ```
 
 Правила:
@@ -44,6 +44,9 @@ python tools/memory_index.py search "запрос"     # поиск (--json дл
 4. Полезные фильтры: `--kind md|lsp|csv|git`, `--folder docs`, `--limit N`, `--prefix`.
 5. Кодировки определяются по содержимому (UTF-8 / UTF-8 BOM / Windows-1251), поэтому `lcm_*.lsp` и `reports/*.csv` ищутся корректно — обычный grep по cp1251-файлам кириллицу **не находит**.
 6. Индекс производный: файлы правите вы, индекс догоняет сам, коммитить нечего.
+7. **`python` в PATH может быть заглушкой Microsoft Store** («Python was not found») — тогда зовите **`py -3`**: все команды выше работают так же.
+8. **Песочница DSH (workspace-write) запрещает запись вне рабочей папки**, поэтому `build` и `update` в ней падают — это не поломка индекса. `search` и `status` сами открывают базу только для чтения и предупреждают, что выдача может быть неполной. Свежий индекс получается либо с разовым расширением доступа на саму команду, либо с базой в доступном каталоге: `$env:LCM_MEMORY_DIR = "$env:TEMP\lcm-memory"` и затем `build` — пересборка занимает секунды.
+9. Обычные процессы (`python`, `git`) не пишут и внутрь рабочей папки: файлы правит только инструмент агента, поэтому правки кода и файлов делайте инструментом, а не скриптом.
 
 ## Кодировки — самое важное
 
@@ -62,8 +65,8 @@ python tools/memory_index.py search "запрос"     # поиск (--json дл
 AutoCAD для них не нужен:
 
 ```bash
-python tools/lisp_check.py lcm_*.lsp    # баланс скобок и строк
-python tools/ref_check.py               # вызовы несуществующих функций
+py -3 tools/lisp_check.py lcm_*.lsp    # баланс скобок и строк
+py -3 tools/ref_check.py               # вызовы несуществующих функций
 ```
 
 Обе должны проходить чисто. Затем в AutoCAD: `LCMRELOAD` и проверка нужной команды.
