@@ -112,7 +112,30 @@ Copy-Item "$W\Уч. 6 шпунт.xlsx" "$W\reports\_backup_uch6_shpunt.xlsx" -Fo
 - **Чертёж не сохранять** — это делает пользователь сам.
 - Сообщить: сколько стрелок нарисовано, сколько марок заполнено, какой цикл и дата в Excel.
 - Откат отрисовки — `& "$W\tools\cad_bridge.ps1" undo back`.
-- Визуальная проверка: `& "$W\tools\cad_bridge.ps1" shot -Out "$W\reports\arrows_drawn.png"`.
+- Визуальная проверка: `& "$W\tools\cad_bridge.ps1" shot -Out "$W\reports\_tmp_arrows.png"`.
+
+## Шаг 10. Убрать за собой (обязательно)
+
+`reports/` — рабочая свалка агента: скриншоты, временный JSON, резервные копии Excel. После выполнения задачи её нужно чистить, иначе папка за несколько прогонов вырастает в мегабайты.
+
+```powershell
+# скриншоты и временные файлы — удалить все
+Remove-Item "$W\reports\*.png" -Force -ErrorAction SilentlyContinue
+Remove-Item "$W\reports\_table_cells.json" -Force -ErrorAction SilentlyContinue
+Remove-Item "$W\reports\*.tmp" -Force -ErrorAction SilentlyContinue
+
+# резервные копии Excel — оставить только самую свежую
+Get-ChildItem "$W\reports\_backup_uch6_shpunt*.xlsx" -ErrorAction SilentlyContinue |
+  Sort-Object LastWriteTime -Descending | Select-Object -Skip 1 | Remove-Item -Force
+```
+
+Правила уборки:
+
+1. **Удалять без вопросов:** `reports/*.png`, `reports/_table_cells.json`, `reports/*.tmp`, `reports/_write_test.txt` — это артефакты агента, восстанавливать нечего.
+2. **Резервные копии Excel:** оставлять **одну** самую свежую `_backup_uch6_shpunt*.xlsx`; предыдущие удалять.
+3. **Отчёты LCM (`reports/lcm_*.csv`) не трогать** — это рабочие отчёты проекта (`lcm_geo_*`, `lcm_chain_*`, `lcm_check_*`, `lcm_points_*`, `lcm_pair_*`), на них ссылается `AGENTS.md`. Чистить их — только по отдельной просьбе пользователя.
+4. Если отчётов накопилось много (каждый прогон пишет новый `lcm_geo_*`), предложить пользователю удалить дубли по датам, но **не удалять молча**.
+5. В отчёте о работе сообщать, сколько освободилось — это подтверждает, что уборка прошла.
 
 ## Правила и грабли (проверено)
 
