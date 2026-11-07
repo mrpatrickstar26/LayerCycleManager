@@ -5,10 +5,11 @@
 корпус: markdown-документация, LISP-модули в Windows-1251, CSV-отчёты и история
 git — всё в одном индексе. Зависимостей нет: только stdlib (sqlite3).
 
-База лежит ВНЕ репозитория:
-    %LOCALAPPDATA%\\cache\\lcm-memory\\<slug>-<hash>.db
-Каталог можно переопределить переменной LCM_MEMORY_DIR — это нужно, когда
-запись вне рабочей папки запрещена (песочница DSH: только workspace-write).
+База лежит в каталоге db_dir из memory.json — по умолчанию .memory/ в корне
+проекта (каталог в .gitignore, индекс производный и не коммитится):
+    .memory/<slug>-<hash>.db
+Каталог переопределяют LCM_MEMORY_DIR или db_dir в конфиге; если запись
+запрещена (песочница DSH), search/status открывают базу только для чтения.
 
 Команды (в Windows вызывать через py -3, если python — заглушка Store):
     py -3 tools/memory_index.py build              # полная пересборка

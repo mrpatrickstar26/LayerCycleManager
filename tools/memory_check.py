@@ -60,7 +60,8 @@ def read(path: Path) -> str:
 
 SKIP_PARTS = {".git", ".memory", "reports", "__pycache__", "node_modules", ".venv", ".idea", ".vscode"}
 LOCALISH = re.compile(
-    r"(^|/)(reports|settings|\.memory)/|docs/LAST_SESSION\.md|\.(dwg|xlsx|cfg|bak|tmp|pyc)$"
+    r"(^|/)(reports|settings|\.memory)/|docs/LAST_SESSION\.md|\.(dwg|xlsx|cfg|bak|tmp|pyc)$",
+    re.IGNORECASE,  # имена ниже приводятся к нижнему регистру — иначе исключение не срабатывает
 )
 MENTION_RE = re.compile(r"((?:[\w.-]+/)*[\w.-]+\.(?:lsp|dcl|py|ps1|cjs|json|md))\b")
 SYMBOL_RE = re.compile(r"\blcm:[a-z0-9][a-z0-9-]*")
