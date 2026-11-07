@@ -1,0 +1,34 @@
+#!/bin/sh
+# Проверки перед коммитом: кодировки, переводы строк, скобки, ссылки, память.
+#
+# Включение в своём клоне (один раз):
+#     git config core.hooksPath tools/hooks
+# Проверить, что работает:
+#     git hook run pre-commit
+# Осознанный обход проверки:
+#     git commit --no-verify
+#
+# Python ищется по порядку: $LCM_PYTHON, py -3, python3, python.
+
+root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+cd "$root" || exit 0
+
+if [ -n "${LCM_PYTHON:-}" ]; then
+    # shellcheck disable=SC2086
+    exec $LCM_PYTHON tools/check_all.py
+fi
+
+if command -v py >/dev/null 2>&1 && py -3 --version >/dev/null 2>&1; then
+    exec py -3 tools/check_all.py
+fi
+
+for candidate in python3 python; do
+    if command -v "$candidate" >/dev/null 2>&1 && "$candidate" --version >/dev/null 2>&1; then
+        exec "$candidate" tools/check_all.py
+    fi
+done
+
+echo "check_all: не найден рабочий Python — проверки перед коммитом не выполнены." >&2
+echo "  Укажите интерпретатор явно:" >&2
+echo '    LCM_PYTHON="C:\Path\to\python.exe" git commit ...' >&2
+exit 1

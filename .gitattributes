@@ -1,0 +1,2 @@
+# sh-хуки обязаны лежать с LF: с CRLF git не сможет их выполнить.
+tools/hooks/* text eol=lf
