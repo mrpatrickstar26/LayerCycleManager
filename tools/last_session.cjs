@@ -3,17 +3,28 @@
  * last_session.cjs — «снимок» предыдущей сессии DeepSeek Harness.
  *
  * Зачем: при старте новой сессии агент не видит диалог прошлой. Скрипт достаёт
- * из лога предыдущей сессии последние реплики (по умолчанию 10) и складывает их
- * в docs/LAST_SESSION.md, который агент читает в начале работы (правило в AGENTS.md).
+ * из лога предыдущей сессии последние реплики (по умолчанию 5) и складывает их
+ * в один из двух снимков, которые агент читает в начале работы.
+ *
+ * Два потока, два файла. Смешивать их нельзя: разговор про плагины и настройки
+ * харнесса ничего не говорит о чертеже, и наоборот.
+ *   work     docs/LAST_SESSION.md         — репозиторий, память, ресёрчи, инструменты;
+ *   autocad  docs/LAST_SESSION_AUTOCAD.md — чертежи, LCM, прогоны, ведомости, Excel.
+ * Поток определяется по содержимому сессии; `--stream` переопределяет решение.
+ * Каждый снимок ссылается на второй файл, чтобы агент не гадал, где смотреть.
+ * Третий разговор — про сам харнесс (плагины, настройки DSH) — снимка здесь не имеет:
+ * его память это `DSH-SETUP.md` в корне рабочей папки, а репозиторий ему не нужен.
  *
  * Откуда данные: ~/.dsh/sessions/<рабочий каталог>/<session-id>/session.v4.jsonl.zstd
  * Формат: zstd-поток из множества кадров, внутри — JSONL событий сессии.
  *
  * Запуск:
- *   node tools/last_session.cjs                 # записать docs/LAST_SESSION.md
- *   node tools/last_session.cjs --limit 20      # больше реплик
- *   node tools/last_session.cjs --stdout        # только показать, не писать
- *   node tools/last_session.cjs --session <id>  # конкретная сессия
+ *   node tools/last_session.cjs                       # поток по содержимому
+ *   node tools/last_session.cjs --stream autocad      # принудительно чертежи
+ *   node tools/last_session.cjs --stream work --limit 8
+ *   node tools/last_session.cjs --stream none        # разговор про харнесс: снимок не пишем
+ *   node tools/last_session.cjs --stdout              # только показать, не писать
+ *   node tools/last_session.cjs --session <id>        # конкретная сессия
  *
  * Зависимостей нет: zstd распаковывается встроенным модулем zlib (Node 22.15+).
  */
@@ -25,22 +36,74 @@ const os = require('os');
 const zlib = require('zlib');
 
 const PROJECT_ROOT = path.resolve(__dirname, '..');
-const DEFAULT_LIMIT = 10;
+const DEFAULT_LIMIT = 5;
 const USER_CUT = 1200;
 const ASSIST_CUT = 600;
 const MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
 const FILE_HEADER = '<!-- Файл генерируется tools/last_session.cjs. Правки вручную будут перезаписаны. -->';
 
+// Потоки: имя файла, как он называется в шапке, и куда смотреть, если задача не та.
+const STREAMS = {
+  work: {
+    file: 'LAST_SESSION.md',
+    label: 'репозиторий и память',
+    other: 'docs/LAST_SESSION_AUTOCAD.md',
+    otherLabel: 'чертежи и AutoCAD',
+  },
+  autocad: {
+    file: 'LAST_SESSION_AUTOCAD.md',
+    label: 'чертежи и AutoCAD',
+    other: 'docs/LAST_SESSION.md',
+    otherLabel: 'репозиторий и память',
+  },
+};
+
+// Признаки потоков. Вес — грубая оценка: упоминание команды LCM весомее, чем слово «чертёж».
+const AUTOCAD_MARKERS = [
+  [/reports[\\/]lcm/gi, 3], [/\bLCM[A-Z]{2,}\b/g, 3], [/\blcm:[a-z-]+/g, 3],
+  [/ведомост/gi, 3], [/\.dwg\b/gi, 3], [/\.lsp\b/gi, 1], [/\.dcl\b/gi, 1],
+  [/Уч\.?\s?\d/gi, 2], [/стрелк/gi, 2], [/отклонени/gi, 2], [/шпунт/gi, 2],
+  [/AutoCAD/g, 1], [/чертеж|чертёж/gi, 1],
+];
+
+const WORK_MARKERS = [
+  [/\.dsh[\\/]/gi, 3], [/cordis\.(patch|yml)/gi, 3], [/plugin_manager|install_bundle/g, 3],
+  [/dsh-plugin|@linxin666|@deepseek-ai\//gi, 3], [/плагин/gi, 2],
+  [/memory_index|memory_check|check_all|last_session/gi, 3], [/AGENTS\.md/g, 2],
+  [/STATE\.md/g, 2], [/research[\\/]/gi, 2], [/pre-commit|git[- ]хук/gi, 3],
+  [/промпт|prompt/gi, 1], [/поток|воркфлоу|workflow/gi, 1],
+];
+
+function scoreMarkers(blob, markers) {
+  let sum = 0;
+  for (const [re, weight] of markers) {
+    const hits = blob.match(re);
+    if (hits) sum += hits.length * weight;
+  }
+  return sum;
+}
+
+function detectStream(events) {
+  const blob = JSON.stringify(events);
+  const autocad = scoreMarkers(blob, AUTOCAD_MARKERS);
+  const work = scoreMarkers(blob, WORK_MARKERS);
+  return { stream: autocad > work ? 'autocad' : 'work', autocad, work };
+}
+
 // ---------------------------------------------------------------- аргументы
 
 function parseArgs(argv) {
-  const args = { limit: DEFAULT_LIMIT, out: path.join(PROJECT_ROOT, 'docs', 'LAST_SESSION.md'), stdout: false, session: null };
+  const args = { limit: DEFAULT_LIMIT, out: null, stdout: false, session: null, stream: 'auto' };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--stdout') args.stdout = true;
     else if (a === '--limit') args.limit = Number(argv[++i]) || DEFAULT_LIMIT;
     else if (a === '--out') args.out = path.resolve(argv[++i]);
     else if (a === '--session') args.session = argv[++i];
+    else if (a === '--stream') {
+      const value = String(argv[++i] || '').toLowerCase();
+      args.stream = ['work', 'autocad', 'none'].includes(value) ? value : 'auto';
+    }
     else if (a === '--help' || a === '-h') { console.log(fs.readFileSync(__filename, 'utf8').split('*/')[0]); process.exit(0); }
   }
   return args;
@@ -191,7 +254,7 @@ function gitInfo() {
   }
 }
 
-function render(session, messages, limit) {
+function render(session, messages, limit, streamKey, detection) {
   const header = session.header || {};
   const events = session.events || [];
   const turns = events.filter((e) => e.type === 'turn/end').length;
@@ -203,13 +266,17 @@ function render(session, messages, limit) {
   const lines = [];
   lines.push(FILE_HEADER);
   lines.push('');
-  lines.push('# Последняя сессия — автоснимок');
+  const info = STREAMS[streamKey];
+  lines.push(`# Последняя сессия — автоснимок (поток: ${info.label})`);
   lines.push('');
   lines.push('> Контекст из предыдущей сессии DeepSeek Harness в этом рабочем каталоге.');
   lines.push('> Читать в начале работы; в git не попадает (см. `.gitignore`).');
+  lines.push(`> Другой поток — ${info.otherLabel}: снимок в \`${info.other}\`.`);
   lines.push('');
   lines.push('| Параметр | Значение |');
   lines.push('|---|---|');
+  lines.push(`| Поток | ${info.label} |`);
+  if (detection) lines.push(`| Определён по содержимому | autocad ${detection.autocad} / work ${detection.work} |`);
   lines.push(`| Сессия | \`${header.id || session.id}\` |`);
   lines.push(`| Начата | ${fmtTime(firstTime)} |`);
   lines.push(`| Последняя активность | ${fmtTime(lastTime)} |`);
@@ -277,7 +344,17 @@ function main() {
   }
 
   const messages = messagesOf(picked.events);
-  const out = render({ id: picked.file.id, header: picked.header, events: picked.events }, messages, args.limit);
+  const detection = args.stream === 'auto' ? detectStream(picked.events) : null;
+  const streamKey = detection ? detection.stream : args.stream;
+  if (streamKey === 'none') {
+    console.log(`Поток: настройки харнесса — снимок не пишется. Решения по DSH ведутся в DSH-SETUP.md.`);
+    if (detection) console.log(`Оценка содержимого: autocad ${detection.autocad} / work ${detection.work}.`);
+    return;
+  }
+  const info = STREAMS[streamKey];
+  const target = args.out ? path.resolve(args.out) : path.join(PROJECT_ROOT, 'docs', info.file);
+  const out = render({ id: picked.file.id, header: picked.header, events: picked.events },
+    messages, args.limit, streamKey, detection);
 
   if (args.stdout) {
     process.stdout.write(out);
@@ -285,13 +362,13 @@ function main() {
   }
   // Песочница DSH может запретить запись в каталог проекта (низкий уровень целостности).
   // В этом случае пишем во временный каталог и сообщаем путь: агент перенесёт файл своим инструментом.
-  let target = args.out;
+  console.log(`Поток: ${streamKey}${detection ? ` (autocad ${detection.autocad} / work ${detection.work})` : ' (--stream)'}`);
   try {
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, out, 'utf8');
     console.log(`Записано: ${target}`);
   } catch (error) {
-    target = path.join(os.tmpdir(), 'lcm_last_session.md');
+    target = path.join(os.tmpdir(), path.basename(target));
     fs.writeFileSync(target, out, 'utf8');
     console.log(`FALLBACK ${target}`);
     console.log(`(прямая запись в ${args.out} недоступна: ${error.code || error.message})`);
