@@ -35,3 +35,10 @@ ActiveX в headless-ядре недоступен, а весь LCM постро�
 
 ## [2026-11-05] lint | добавлены `docs/LOG.md` и `memory_check.py --deep` (сверка ссылок и символов)
 Приём взят из LLM Wiki: lint-проход и append-only лог. Подробности — `research/08-memory-hygiene.md`.
+
+## [2026-11-08] decision | проверки перед коммитом: `check_all.py` и git-хук `pre-commit`
+Кодировки, переводы строк, дубли команд `C:`, `memory.json`, затем `lisp_check` / `ref_check` / `memory_check --deep`. Подробности — `research/09-precommit-checks.md`.
+
+## [2026-11-09] incident | `check_all` упал на семи файлах с LF при чистом `git status`
+`core.autocrlf=true` скрывает расхождение: в индексе LF, в рабочей копии LF, для git изменений нет. Лечение — `git checkout --`, политика закреплена в `.gitattributes` (`* text=auto eol=crlf`). Там же исправлена метка пропуска в `--fast`, хук включён.
+

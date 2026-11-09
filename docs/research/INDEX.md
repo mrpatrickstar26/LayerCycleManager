@@ -13,3 +13,4 @@
 | [06-request-cost.md](06-request-cost.md) | экономика запросов: контекст × тариф | 05.11.2026 |
 | [07-sandbox-and-permissions.md](07-sandbox-and-permissions.md) | песочница DSH, метка Low и запись в проект | 05.11.2026 |
 | [08-memory-hygiene.md](08-memory-hygiene.md) | lint памяти и хронология событий | 05.11.2026 |
+| [09-precommit-checks.md](09-precommit-checks.md) | проверки перед коммитом: `check_all.py`, git-хук, политика CRLF | 08.11.2026 |

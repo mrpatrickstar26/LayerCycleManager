@@ -88,7 +88,7 @@
 |---|---|---|
 | Модули программы | корень репозитория, `lcm_*.lsp`, `lcm_ui.dcl`, `lcm.cuix` | да |
 | Документация | `README.md` (разделы 7.6–7.9 — этапы 0–3), `docs/STATE.md` | да |
-| Скрипты проверок (Python) | `tools/lisp_check.py`, `tools/ref_check.py` | да |
+| Скрипты проверок (Python) | `tools/check_all.py` — все проверки разом, его же вызывает git-хук `tools/hooks/pre-commit`; `tools/lisp_check.py`, `tools/ref_check.py`, `tools/memory_check.py` | да |
 | Память проекта (FTS5-индекс) | `tools/memory_index.py`, база в `.memory/` в корне проекта (`db_dir` в `memory.json`, переопределяется `LCM_MEMORY_DIR`) | да (код) |
 | Хронология событий | [`docs/LOG.md`](LOG.md) — по строке на событие, `grep "^## \["` | да |
 | Снимок прошлой сессии DSH | генерируется `tools/last_session.cjs` в `docs/LAST_SESSION.md`; читается в начале сессии по правилу из `AGENTS.md` | нет (в `.gitignore`) |
@@ -106,6 +106,7 @@
 1. **Кодировки.** `lcm_main.lsp`, `lcm_data.lsp`, `lcm_core.lsp`, `lcm_config.lsp` — UTF-8 (ASCII без кириллицы). `lcm_ui.lsp`, `lcm_ui.dcl`, `lcm_diag.lsp`, `lcm_geo.lsp`, `lcm_chain.lsp`, `lcm_check.lsp` — **Windows-1251** (AutoCAD читает .lsp как ANSI, русский текст иначе превращается в кракозябры). Переводы строк — CRLF во всех файлах.
 2. **Перед загрузкой в AutoCAD** прогонять статические проверки (AutoCAD не нужен):
    ```
+   py -3 tools/check_all.py                 # всё разом: кодировки, скобки, ссылки, память
    py -3 tools/lisp_check.py lcm_*.lsp      # баланс скобок и строк
    python tools/ref_check.py                 # вызовы несуществующих функций
    ```
@@ -150,6 +151,7 @@
 - **Уборка `reports/` — обязательна.** После задачи удаляются скриншоты `*.png`, `_table_cells.json`, `*.tmp`, `agent_dump*.csv`, старые резервные копии Excel (остаётся одна свежая), дубли отчётов LCM (остаётся по одному свежему на каждую пару слоёв и тип). Порядок — шаг 10 скилла `lcm-arrows-report`.
 - **Стоимость запросов** — почему один и тот же вопрос стоит то 0,55 ₽, то 5,9 ₽ и как это снизить: [`research/06-request-cost.md`](research/06-request-cost.md).
 - **Песочница и запись в проект** — метка целостности Low, что теперь работает без расширения доступа: [`research/07-sandbox-and-permissions.md`](research/07-sandbox-and-permissions.md).
+- **Проверки перед коммитом** — `check_all.py`, git-хук `pre-commit`, политика CRLF и почему `git status` не видит LF: [`research/09-precommit-checks.md`](research/09-precommit-checks.md).
 
 ## 8. Если работа продолжается на другом компьютере
 
