@@ -273,7 +273,7 @@ def main() -> int:
     results.append(("ref_check.py", ok, [], out))
 
     if fast:
-        results.append(("memory_check.py --deep", True, [], "пропущено: --fast"))
+        results.append(("memory_check.py --deep — пропущено (--fast)", True, [], ""))
     else:
         ok, out = run_tool(["tools/memory_check.py", "--deep"])
         results.append(("memory_check.py --deep", ok, [], out))

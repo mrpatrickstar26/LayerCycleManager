@@ -1,2 +1,7 @@
+# CRLF во всех текстовых файлах, независимо от core.autocrlf на машине:
+# правило из AGENTS.md должно выполняться в любом клоне, а не только там,
+# где autocrlf=true.
+* text=auto eol=crlf
+
 # sh-хуки обязаны лежать с LF: с CRLF git не сможет их выполнить.
 tools/hooks/* text eol=lf
