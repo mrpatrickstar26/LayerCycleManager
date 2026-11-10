@@ -45,12 +45,11 @@ py -3 tools/memory_index.py show README.md --at "7.10" --section
 ## Проверки перед загрузкой в AutoCAD
 
 ```bash
-py -3 tools/lisp_check.py lcm_*.lsp    # баланс скобок и строк
-py -3 tools/ref_check.py               # вызовы несуществующих функций
-py -3 tools/memory_check.py            # память: размер AGENTS.md, полнота research/
+py -3 tools/check_all.py                # всё разом: кодировки, CRLF, дубли команд, скобки, ссылки, память
+py -3 tools/lisp_check.py lcm_*.lsp     # только для файлов, ещё не добавленных в git
 ```
 
-Все три должны проходить чисто. Затем в AutoCAD: `LCMRELOAD` и проверка нужной команды.
+Затем в AutoCAD: `LCMRELOAD` и проверка нужной команды.
 
 ## Правила
 
