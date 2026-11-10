@@ -6,6 +6,7 @@ description: Полный цикл LayerCycleManager в AutoCAD — нарисо
 # LayerCycleManager: стрелки → ведомость → Excel
 
 Процедура проверена 30.10.2026 на чертеже «Уч.6 тест.dwg» (11 стрелок → 11 марок в таблице и в Excel).
+10.11.2026 пройдена целиком через `tools/bridge.py` трижды; Excel теперь дописывает блоки справа, а не перезаписывает.
 
 ## Где что лежит
 
@@ -13,21 +14,31 @@ description: Полный цикл LayerCycleManager в AutoCAD — нарисо
 
 | Файл | Назначение |
 |---|---|
-| `tools/cad_bridge.ps1` | мост к запущенному AutoCAD (`status`, `eval`, `load`, `shot`, `undo`) |
+| `tools/bridge.py` | запуск моста в песочнице: `py -3 tools\bridge.py <глагол> …` (прокси к `cad_bridge.ps1`) |
+| `tools/cad_bridge.ps1` | сам мост к запущенному AutoCAD (`status`, `eval`, `load`, `shot`, `undo`, `report`) |
 | `lcm_table.lsp` | ведомость отклонений: `(lcm:dev-table слойA слойB радиус)` |
-| `tools/lcm_table_to_xlsx.py` | перенос таблицы в Excel (блок E:H) |
+| `tools/lcm_table_to_xlsx.py` | перенос таблицы в Excel: новый блок вплотную справа от существующих |
+| `tools/lcm_cells_to_json.py` | ячейки ведомости из `_tmp/tbl_cells.txt` → `reports/_table_cells.json` |
 | `reports/_table_cells.json` | промежуточная выгрузка ячеек таблицы |
 
-Все команды запускать через `pwsh` с `sandbox_permissions: danger-full-access` (COM к AutoCAD и запись в проект).
+## Как обращаться к AutoCAD
+
+Все команды к AutoCAD — `py -3 "$W\tools\bridge.py" …`. Прямой вызов `.ps1` из песочницы DSH падает с `AuthorizationManager check failed` (процессы низкой целостности не исполняют сценарии), поэтому мост запускается обёрткой — подробности в `docs/research/04-cad-bridge.md`.
+
+- Вызовы к живому AutoCAD требуют полного доступа к системе: либо режим сессии с полным доступом / «Auto review», либо разовое расширение (`sandbox_permissions: danger-full-access`) с пояснением.
+- Команды без AutoCAD (`report`) работают и без расширения.
+- **Длинные LISP-выражения** пишутся файлом в `_tmp\` и передаются как `eval "@$W\..\_tmp\имя.lsp"`: кавычки внутри не экранируются, командная строка их не рвёт.
 
 ## Шаг 0. Проверить обстановку
 
 ```powershell
 $W = "C:\Users\Durkin.RI\Desktop\Project DSH Test\LayerCycleManager"
-& "$W\tools\cad_bridge.ps1" status
+py -3 "$W\tools\bridge.py" status
 ```
 
-Ожидается: AutoCAD запущен, открыт нужный DWG, `LCMVersion` не пустой. Если LCM не загружен — `& "$W\tools\cad_bridge.ps1" load "$W\lcm_main.lsp"`.
+Ожидается: AutoCAD запущен, открыт нужный DWG, `LCMVersion` не пустой. Если LCM не загружен — `py -3 "$W\tools\bridge.py" load "$W\lcm_main.lsp"`.
+
+Слои берутся из чертежа как есть: в «Уч.6» это `Уч 6 Цикл 0` и `Уч 6 Цикл 1` — **без точки** после «Уч» (точка есть только в имени файла чертежа).
 
 ## Шаг 1. Параметры
 
@@ -44,50 +55,76 @@ $W = "C:\Users\Durkin.RI\Desktop\Project DSH Test\LayerCycleManager"
 ## Шаг 2. Маркер отката
 
 ```powershell
-& "$W\tools\cad_bridge.ps1" undo mark
+py -3 "$W\tools\bridge.py" undo mark
 ```
 
 ## Шаг 3. Отрисовка стрелок
 
 Настройки подменяются только в памяти: файл настроек не сохраняется, после отрисовки значения возвращаются.
 
-```powershell
-& "$W\tools\cad_bridge.ps1" eval '(progn (setq lcm:old-scale (lcm:config-get "SCALE") lcm:old-th (lcm:config-get "TEXT_HEIGHT") lcm:old-bl (lcm:config-get "BY_LAYER")) (lcm:config-set "SCALE" 400.0) (lcm:config-set "TEXT_HEIGHT" 2.0) (lcm:config-set "BY_LAYER" 1) (lcm:geo-run "Уч 6 Цикл 0" "Уч 6 Цикл 1" 5.0 T))'
-& "$W\tools\cad_bridge.ps1" eval '(progn (lcm:config-set "SCALE" lcm:old-scale) (lcm:config-set "TEXT_HEIGHT" lcm:old-th) (lcm:config-set "BY_LAYER" lcm:old-bl) "restored")'
+`_tmp\draw.lsp`:
+
+```lisp
+(progn (setq lcm:old-scale (lcm:config-get "SCALE") lcm:old-th (lcm:config-get "TEXT_HEIGHT") lcm:old-bl (lcm:config-get "BY_LAYER")) (lcm:config-set "SCALE" 400.0) (lcm:config-set "TEXT_HEIGHT" 2.0) (lcm:config-set "BY_LAYER" 1) (lcm:geo-run "Уч 6 Цикл 0" "Уч 6 Цикл 1" 5.0 T))
 ```
 
-Результат вызова — список, где первый элемент = число нарисованных пар.
+`_tmp\restore.lsp`:
+
+```lisp
+(progn (lcm:config-set "SCALE" lcm:old-scale) (lcm:config-set "TEXT_HEIGHT" lcm:old-th) (lcm:config-set "BY_LAYER" lcm:old-bl) "restored")
+```
+
+```powershell
+py -3 "$W\tools\bridge.py" eval "@C:\...\_tmp\draw.lsp"
+py -3 "$W\tools\bridge.py" eval "@C:\...\_tmp\restore.lsp"
+```
+
+Результат отрисовки — список, где первый элемент = число нарисованных пар.
 
 **Если на слое B уже есть стрелки** (`LINE`/`TEXT`/`SOLID` > 0), сначала уточнить у пользователя, перерисовывать ли. При «да» — удалить старые стрелки (только `LINE`, `TEXT`, `SOLID` этого слоя, `POINT` не трогать) либо откатиться на маркер `undo` от прошлой отрисовки.
 
 ## Шаг 4. Проверить, что стрелки нарисованы
 
-```powershell
-& "$W\tools\cad_bridge.ps1" eval '(mapcar (function (lambda (typ) (cons typ (if (setq s (ssget "_X" (list (cons 0 typ) (cons 8 "Уч 6 Цикл 1")))) (sslength s) 0)))) (list "POINT" "TEXT" "LINE" "SOLID"))'
+`_tmp\counts.lsp`:
+
+```lisp
+(progn (setq r nil) (foreach L (list "Уч 6 Цикл 0" "Уч 6 Цикл 1") (setq r (cons (cons L (mapcar (function (lambda (ty) (if (setq s (ssget "_X" (list (cons 0 ty) (cons 8 L)))) (sslength s) 0))) (list "POINT" "LINE" "TEXT" "SOLID"))) r))) r)
 ```
 
-`TEXT`, `LINE`, `SOLID` должны совпадать по количеству и быть равны числу пар.
+```powershell
+py -3 "$W\tools\bridge.py" eval "@C:\...\_tmp\counts.lsp"
+```
+
+`TEXT`, `LINE`, `SOLID` слоя B должны совпадать по количеству и быть равны числу пар. Слой A содержит `TEXT` — это подписи точек, они там были до отрисовки.
 
 ## Шаг 5. Ведомость отклонений
 
-Старую таблицу удалить, новую построить:
+Старую таблицу удалить, новую построить — `_tmp\table.lsp`:
+
+```lisp
+(progn (setq n 0) (if (setq s (ssget "_X" (list (cons 0 "ACAD_TABLE")))) (progn (setq i 0) (while (< i (sslength s)) (entdel (ssname s i)) (setq i (1+ i) n (1+ n))))) (lcm:dev-table "Уч 6 Цикл 0" "Уч 6 Цикл 1" 5.0))
+```
 
 ```powershell
-& "$W\tools\cad_bridge.ps1" eval '(progn (setq n 0) (if (setq s (ssget "_X" (list (cons 0 "ACAD_TABLE")))) (progn (setq i 0) (while (< i (sslength s)) (entdel (ssname s i)) (setq i (1+ i) n (1+ n))))) (lcm:dev-table "Уч 6 Цикл 0" "Уч 6 Цикл 1" 5.0))'
+py -3 "$W\tools\bridge.py" eval "@C:\...\_tmp\table.lsp"
 ```
 
 Возврат `(число марок с отклонениями, всего марок, точка вставки)`.
 
 ## Шаг 6. Выгрузить ячейки таблицы
 
-```powershell
-$a = [Runtime.InteropServices.Marshal]::GetActiveObject('AutoCAD.Application')
-$ms = $a.ActiveDocument.ModelSpace
-$tbl = $null; foreach ($e in $ms) { if ($e.ObjectName -eq 'AcDbTable') { $tbl = $e; break } }
-$rows = $tbl.Rows; $out = @()
-for ($r = 0; $r -lt $rows; $r++) { $row = @(); for ($c = 0; $c -lt 4; $c++) { $row += [string]$tbl.GetText($r, $c) }; $out += ,$row }
-$out | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath "$W\reports\_table_cells.json" -Encoding UTF8
+`_tmp\export.lsp` — пишет ячейки в `_tmp\tbl_cells.txt` (строка `r;c;текст`):
+
+```lisp
+(progn (setq e (ssname (ssget "_X" (list (cons 0 "ACAD_TABLE"))) 0) o (vlax-ename->vla-object e) f (open "C:/ПУТЬ/К/ПРОЕКТУ/_tmp/tbl_cells.txt" "w") r 0) (repeat (vla-get-Rows o) (setq c 0) (repeat 4 (write-line (strcat (itoa r) ";" (itoa c) ";" (vla-GetText o r c)) f) (setq c (1+ c))) (setq r (1+ r))) (close f) (list r "ok"))
 ```
+
+```powershell
+py -3 "$W\tools\bridge.py" eval "@C:\...\_tmp\export.lsp"
+py -3 "$W\tools\lcm_cells_to_json.py" "C:\...\_tmp\tbl_cells.txt" "$W\reports\_table_cells.json"
+```
+
+Путь в `open` внутри LISP — прямой слэш и кириллица недопустимы: писать ASCII-путь.
 
 ## Шаг 7. Заполнить Excel
 
@@ -97,29 +134,30 @@ Copy-Item "$W\Уч. 6 шпунт.xlsx" "$W\reports\_backup_uch6_shpunt.xlsx" -Fo
 & $py "$W\tools\lcm_table_to_xlsx.py"
 ```
 
-Скрипт: копирует первый блок вплотную справа (E:H), увеличивает номер цикла на 1, ставит сегодняшнюю дату, подставляет отклонения по маркам из таблицы AutoCAD, где данных нет — прочерк. Первый блок (A:D) не меняется.
+Скрипт: **дописывает новый блок вплотную справа от существующих** — первый свободный участок из 4 столбцов (`A:D` → `E:H` → `I:L` → `M:P`), существующие блоки не трогает. В шапке номер цикла на 1 больше последнего блока, дата — сегодняшняя. Отклонения подставляет по маркам из таблицы AutoCAD, где данных нет — прочерк, `D` — формула по столбцам своего блока.
 
 ## Шаг 8. Проверить результат
 
 ```powershell
-& $py -c "import openpyxl; ws=openpyxl.load_workbook(r'$W\Уч. 6 шпунт.xlsx').active; print(ws.dimensions, sorted(str(m) for m in ws.merged_cells.ranges)); print([(ws.cell(r,5).value, ws.cell(r,6).value, ws.cell(r,7).value, ws.cell(r,8).value) for r in range(4, ws.max_row+1) if ws.cell(r,6).value not in (None,'-')])"
+& $py -c "import openpyxl; ws=openpyxl.load_workbook(r'$W\Уч. 6 шпунт.xlsx').active; print(ws.dimensions, sorted(str(m) for m in ws.merged_cells.ranges)); print([(ws.cell(r,c).value, ws.cell(r,c+1).value) for c in range(5, ws.max_column, 4) for r in range(4, ws.max_row+1) if ws.cell(r,c).value not in (None,'-')])"
 ```
 
-Ожидается: объединения `E1:E3`, `F1:H1`, `F2:H2`; заполненные строки совпадают с числом стрелок.
+Ожидается: у каждого блока объединения вида `<X>1:<X>3`, `<X+1>1:<X+3>1`, `<X+1>2:<X+3>2`; марок с числами в новом блоке столько же, сколько стрелок.
 
 ## Шаг 9. Завершение
 
 - **Чертёж не сохранять** — это делает пользователь сам.
-- Сообщить: сколько стрелок нарисовано, сколько марок заполнено, какой цикл и дата в Excel.
-- Откат отрисовки — `& "$W\tools\cad_bridge.ps1" undo back`.
-- Визуальная проверка: `& "$W\tools\cad_bridge.ps1" shot -Out "$W\reports\_tmp_arrows.png"`.
+- Сообщить: сколько стрелок нарисовано, сколько марок заполнено, в каком блоке, какой цикл и дата в Excel.
+- Откат отрисовки — `py -3 "$W\tools\bridge.py" undo back`.
+- Визуальная проверка: `py -3 "$W\tools\bridge.py" shot -Out "$W\reports\_tmp_arrows.png"`.
 
 ## Шаг 10. Убрать за собой (обязательно)
 
 `reports/` — рабочая свалка агента: скриншоты, временный JSON, резервные копии Excel. После выполнения задачи её нужно чистить, иначе папка за несколько прогонов вырастает в мегабайты.
 
 ```powershell
-# 1. скриншоты и временные файлы агента — удалить все
+# 1. временные файлы агента — удалить все (включая _tmp проекта)
+Remove-Item "..\_tmp\*" -Force -ErrorAction SilentlyContinue
 Remove-Item "$W\reports\*.png" -Force -ErrorAction SilentlyContinue
 Remove-Item "$W\reports\_table_cells.json" -Force -ErrorAction SilentlyContinue
 Remove-Item "$W\reports\*.tmp" -Force -ErrorAction SilentlyContinue
@@ -139,27 +177,30 @@ $csv | Group-Object { ($_.BaseName -replace '_\d{8,14}$','') } | ForEach-Object 
 
 Правила уборки (пользователь подтвердил 05.11.2026 — **все временные файлы и отчёты удаляются при завершении работы**):
 
-1. **Удалять без вопросов:** `reports/*.png`, `reports/_table_cells.json`, `reports/*.tmp`, `reports/_write_test.txt`, `reports/agent_dump*.csv` — это артефакты агента, восстанавливать нечего.
+1. **Удалять без вопросов:** `..\_tmp\*`, `reports/*.png`, `reports/_table_cells.json`, `reports/*.tmp`, `reports/_write_test.txt`, `reports/agent_dump*.csv` — это артефакты агента, восстанавливать нечего.
 2. **Резервные копии Excel:** оставлять **одну** самую свежую `_backup_uch6_shpunt*.xlsx`, предыдущие удалять.
-3. **Отчёты LCM** (`lcm_geo_*`, `lcm_chain_*`, `lcm_check_*`, `lcm_points_*`, `lcm_pair_*`) — временные: в конце работы оставить **по одному самому свежему на каждую пару слоёв и каждый тип**, дубли удалить. Полная история отчётов не нужна: они пересоздаются прогоном.
-4. Отчёты за текущую задачу, если пользователь их ещё не посмотрел, удалять не раньше, чем закончится задача (их содержимое уже перенесено в Excel/`STATE.md`).
-5. В отчёте о работе указывать, сколько файлов удалено и сколько освободилось — это подтверждает, что уборка прошла.
+3. **Отчёты LCM** (`lcm_geo_*`, `lcm_chain_*`, `lcm_check_*`, `lcm_points_*`, `lcm_pair_*`) — временные: в конце работы оставить **по одному самому свежему на каждую пару слоёв и каждый тип**, дубли удалить.
+4. Отчёты за текущую задачу, если пользователь их ещё не просмотрел, удалять не раньше, чем закончится задача.
+5. В отчёте о работе указывать, сколько файлов удалено и сколько осталось — это подтверждает, что уборка прошла.
+6. Если в сессии включена проверка авторизации, уборку надёжнее подтвердить формулировкой в самом запросе: «… и убери за собой» — иначе проверяющий спросит про удаление отдельно.
 
 Целевое состояние папки после уборки: **~15–20 файлов, < 50 КБ** (свежие отчёты по парам + одна резервная копия Excel).
 
 ## Правила и грабли (проверено)
 
-1. **Длинные LISP-выражения не отправлять в `SendCommand`** — командная строка обрывает их, и AutoCAD зависает, ожидая ввода. Держать `eval` короче ~500 символов; длинное оформлять как функцию в модуле и вызывать коротко.
+1. **Длинные LISP-выражения не отправлять в `SendCommand`** — командная строка обрывает их, и AutoCAD зависает, ожидая ввода. Держать `eval` короче ~500 символов; длинное писать файлом и передавать как `eval "@файл"`.
 2. **`T` нельзя использовать как имя переменной** в AutoLISP — это константа (ошибка «неверный объект для внедрения: T»).
-3. **Кодировки:** `.lsp` — Windows-1251 + CRLF; `.ps1` — UTF-8 с BOM; `.md` и `.py` — UTF-8.
+3. **Кодировки:** `.lsp` — Windows-1251 + CRLF; `.ps1` — UTF-8 с BOM; `.md`, `.py` — UTF-8, переводы строк CRLF.
 4. **Не вызывать интерактивные** `LCM`, `LCMCHAIN`, `LCMGEOFILL` — они ждут ввода. Только функции: `lcm:geo-run`, `lcm:chain-run`, `lcm:dev-table`.
 5. **Допуск примыкания стрелки к точке — 0.1** (`lcm:dev-tolerance`). При 1.0 соседняя марка забирала чужую стрелку.
 6. **Отклонения берутся из нарисованных стрелок**, а не из памяти LCM: сканируется слой последнего цикла, `LINE` чьё начало совпадает с точкой слоя A; `D` — из подписи у острия.
 7. **Ведомость строит строки по всем маркам слоя A**, у марок без стрелки — прочерк.
-8. **Excel**: блок ставится вплотную (E:H), `D` — формула `=(F*F+G*G)^0.5`, включён `fullCalcOnLoad`; резервная копия файла кладётся в `reports/`.
-9. **Перед правкой модулей** — `py -3 tools/lisp_check.py lcm_*.lsp` и `py -3 tools/ref_check.py` (в русской Windows `python` в PATH часто оказывается заглушкой Microsoft Store — `py -3` работает всегда; вывод этих скриптов в PowerShell читается как UTF-8).
+8. **Excel**: блоки идут вплотную справа (`A:D`, `E:H`, `I:L`, …), старые не перезаписываются, `D` — формула `=(F*F+G*G)^0.5` по своим столбцам, включён `fullCalcOnLoad`; резервная копия файла кладётся в `reports/`.
+9. **Перед правкой модулей** — `py -3 tools/lisp_check.py lcm_*.lsp` и `py -3 tools/ref_check.py`; перед коммитом — `py -3 tools/check_all.py` (в русской Windows `python` в PATH часто заглушка Microsoft Store — `py -3` работает всегда).
 10. **COM работает только с уже запущенным AutoCAD**: мост не запускает новый экземпляр (иначе появляется пустое «Чертеж1.dwg» и все вызовы уходят в него).
+11. **`bridge.py` берёт корень проекта из своего расположения**: `$PSScriptRoot` внутри scriptblock пуст, обёртка подставляет путь сама. Переносить `cad_bridge.ps1` и `bridge.py` нужно вместе.
+12. **Слои ищутся по точному имени**: `Уч 6 Цикл 0`, а не `Уч.6 Цикл 0`. Перед отрисовкой проверить список: `py -3 "$W\tools\bridge.py" layers`.
 
 ## Быстрый режим («отрисуй стрелки»)
 
-Если пользователь не уточняет параметры — брать слой A/B из настроек LCM (`LAYER_ZERO`, `LAYER_LAST`), радиус 5, масштаб 400, высота 2, цвет по слою, и выполнять шаги 2 → 8 без вопросов.
+Если пользователь не уточняет параметры — брать слой A/B из настроек LCM (`LAYER_ZERO`, `LAYER_LAST`), радиус 5, масштаб 400, высота 2, цвет по слою, и выполнять шаги 2 → 8 без вопросов. Уборку (шаг 10) выполнять всегда, если пользователь не сказал её не делать.

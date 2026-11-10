@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Добавляет в «Уч. 6 шпунт.xlsx» второй блок таблицы вплотную справа (E:H).
+"""Добавляет в «Уч. 6 шпунт.xlsx» новый блок таблицы вплотную справа от существующих.
 
 Логика (по договорённости с пользователем):
+  * старые блоки не трогаются: новый ставится в первые свободные 4 столбца
+    (первый блок — A:D, затем E:H, I:L, M:P и так далее);
   * копируется вся первая таблица (шапка + все строки марок, включая I1…I24);
-  * значения отклонений сначала не переносятся;
-  * в шапке номер цикла увеличивается на 1, дата — сегодняшняя;
+  * в шапке новому блоку достаётся номер цикла на 1 больше последнего, дата — сегодняшняя;
   * отклонения подставляются из таблицы AutoCAD (reports/_table_cells.json)
     по совпадению марки (числовые и вида I16);
   * где в AutoCAD прочерк или марки нет — в Excel тоже прочерк.
@@ -26,7 +27,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 XLSX = os.path.join(ROOT, "Уч. 6 шпунт.xlsx")
 DATA = os.path.join(ROOT, "reports", "_table_cells.json")
 
-START_COL = 5          # второй блок: E:H, вплотную к первому (A:D)
+START_COL = 5          # первый блок после исходного A:D идёт сюда, далее вплотную
+BLOCK_WIDTH = 4
 
 
 def style_from(src, dst):
@@ -62,6 +64,21 @@ def next_cycle(label):
     return f"{label} {today}"
 
 
+def find_next_block(ws):
+    """Столбец, с которого начинается первый свободный блок."""
+    col = START_COL
+    while any(ws.cell(r, col).value not in (None, "") for r in (1, 2, 3)):
+        col += BLOCK_WIDTH
+    return col
+
+
+def last_block_cycle(ws, start_col):
+    """Метка цикла предыдущего блока; для самого первого блока — метка из B2."""
+    if start_col <= START_COL:
+        return ws["B2"].value
+    return ws.cell(2, start_col - BLOCK_WIDTH + 1).value
+
+
 def main():
     with open(DATA, encoding="utf-8-sig") as fh:
         raw = json.load(fh)
@@ -78,25 +95,18 @@ def main():
     # Столбец D содержит формулы — просим Excel пересчитать их при открытии
     wb.calculation.fullCalcOnLoad = True
 
-    c0 = START_COL
+    c0 = find_next_block(ws)
     col = lambda i: get_column_letter(c0 + i)
 
-    # ---- убрать старый второй блок, если он был ----
-    for rng in (f"{col(0)}1:{col(0)}3", f"{col(1)}1:{col(3)}1", f"{col(1)}2:{col(3)}2"):
-        if rng in [str(m) for m in ws.merged_cells.ranges]:
-            ws.unmerge_cells(rng)
-    for r in range(1, ws.max_row + 1):
-        for i in range(4):
-            ws.cell(r, c0 + i).value = None
-
-    # ---- шапка ----
+    # ---- стили шапки берём из первого блока ----
     for i, src_col in enumerate(range(1, 5)):
         for r in (1, 2, 3):
             style_from(ws.cell(r, src_col), ws.cell(r, c0 + i))
 
+    # ---- шапка нового блока ----
     ws[f"{col(0)}1"] = ws["A1"].value        # «№ марки»
     ws[f"{col(1)}1"] = ws["B1"].value        # «Смещение по x и y (мм)»
-    ws[f"{col(1)}2"] = next_cycle(ws["B2"].value)
+    ws[f"{col(1)}2"] = next_cycle(last_block_cycle(ws, c0))
     ws[f"{col(1)}3"] = ws["B3"].value        # «ΣΔX»
     ws[f"{col(2)}3"] = ws["C3"].value        # «ΣΔY»
     ws[f"{col(3)}3"] = ws["D3"].value        # «D»
@@ -136,8 +146,8 @@ def main():
         if values is not None:
             filled += 1
 
-    # ширина второго блока = ширине первого
-    for i in range(4):
+    # ширина нового блока = ширине первого
+    for i in range(BLOCK_WIDTH):
         ws.column_dimensions[col(i)].width = ws.column_dimensions[get_column_letter(1 + i)].width
 
     wb.save(XLSX)
