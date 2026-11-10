@@ -15,11 +15,19 @@ undo mark, eval, restore, counts) и 16–18 на полный цикл. Зде�
     xlsx    — ячейки таблицы -> новый блок в «Уч. 6 шпунт.xlsx»
     all     — draw -> table -> xlsx
 
+Настройки:
+
+    по умолчанию — _tmp/lcm_run.cfg в папке рядом с проектом (плоский
+    key=value, комментарии с # или ;). Ключи: layer_a, layer_b, radius,
+    scale, text_height, color, force, excel. Аргументы командной строки
+    важнее файла; --config PATH — другой файл, --show-config — показать
+    итоговые значения и выйти, не обращаясь к AutoCAD.
+
 Безопасность:
 
     * перед изменениями ставится undo mark, при расхождении количеств — undo back;
-    * SCALE / TEXT_HEIGHT / BY_LAYER подменяются только в памяти и возвращаются
-      через unwind-protect, даже если отрисовка упала;
+    * SCALE / TEXT_HEIGHT / BY_LAYER / ACI подменяются только в памяти и
+      возвращаются через unwind-protect, даже если отрисовка упала;
     * Excel пишется только после успешной проверки; перед записью — резервная копия;
     * стрелки на слое B при --force удаляются (LINE/TEXT/SOLID), точки (POINT) не трогаются.
 
@@ -48,6 +56,8 @@ BRIDGE = TOOLS / "bridge.py"
 REPORTS = ROOT / "reports"
 XLSX = ROOT / "Уч. 6 шпунт.xlsx"
 TEMP = Path(tempfile.gettempdir()) / "lcm_cycle"
+DEFAULT_CONFIG = ROOT.parent / "_tmp" / "lcm_run.cfg"
+DEFAULT_CONFIG_LABEL = "_tmp/lcm_run.cfg"
 
 ARROW_TYPES = ("LINE", "TEXT", "SOLID")
 
@@ -93,6 +103,11 @@ def lisp_num(value: float) -> str:
     return repr(float(value))
 
 
+def lisp_int(value: int) -> str:
+    """Целое число для AutoLISP: ACI должен остаться целым, а не 10.0."""
+    return str(int(value))
+
+
 def eval_lisp(expression: str) -> tuple[int, str]:
     """Выполнить LISP-выражение через временный файл (длинные строки не рвутся)."""
     TEMP.mkdir(parents=True, exist_ok=True)
@@ -120,6 +135,235 @@ def field(text: str, name: str) -> str:
             parts = line.split(":", 1)
             return parts[1].strip() if len(parts) > 1 else ""
     return ""
+
+
+# ── настройки: файл _tmp/lcm_run.cfg и аргументы ────────────────────────────
+
+KNOWN_CONFIG_KEYS = ("layer_a", "layer_b", "radius", "scale", "text_height",
+                     "color", "force", "excel")
+TRUE_WORDS = {"1", "true", "yes", "да"}
+FALSE_WORDS = {"0", "false", "no", "нет"}
+_MISSING = object()
+
+
+class ConfigProblem(Exception):
+    """Ошибка файла настроек с готовым текстом «файл:строка: …»."""
+
+
+class Settings:
+    """Итоговые настройки: значения, источники, цвет и путь к файлу."""
+
+    def __init__(self, label: str, found: bool) -> None:
+        self.label = label
+        self.found = found
+        self.values: dict[str, object] = {}
+        self.sources: dict[str, str] = {}
+        self.by_layer = 1.0
+        self.aci: int | None = None
+
+    def value(self, name: str):
+        return self.values.get(name)
+
+
+def parse_color(value: str, filename: str, line: int) -> int | str:
+    """color: by_layer / пусто -> by_layer, целое 1..255 -> ACI."""
+    if not value or value.lower() == "by_layer":
+        return "by_layer"
+    if re.fullmatch(r"[+-]?\d+", value):
+        number = int(value)
+        if 1 <= number <= 255:
+            return number
+    raise ConfigProblem(
+        f"{filename}:{line}: 'color' ожидает 1..255 или by_layer")
+
+
+def read_config(path: Path, label: str) -> dict[str, object]:
+    """Прочитать плоский key=value; ошибки — ConfigProblem без трейсбека."""
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except UnicodeDecodeError:
+        raise ConfigProblem(f"{label}: файл не в кодировке UTF-8")
+    except OSError as exc:
+        raise ConfigProblem(f"{label}: не удалось прочитать файл ({exc})")
+
+    values: dict[str, object] = {}
+    for number, raw in enumerate(text.splitlines(), 1):
+        line = raw.strip()
+        if not line or line.startswith(("#", ";")):
+            continue
+        if "=" not in line:
+            raise ConfigProblem(
+                f"{label}:{number}: неизвестный ключ '{line}'")
+        raw_key, raw_value = line.split("=", 1)
+        raw_key = raw_key.strip()
+        key = raw_key.lower()
+        if key not in KNOWN_CONFIG_KEYS:
+            raise ConfigProblem(
+                f"{label}:{number}: неизвестный ключ '{raw_key}'")
+        value = raw_value.strip()
+        if key in ("radius", "scale", "text_height"):
+            try:
+                values[key] = float(value)
+            except ValueError:
+                raise ConfigProblem(
+                    f"{label}:{number}: '{key}' ожидает число, "
+                    f"получено '{value}'")
+        elif key == "color":
+            values[key] = parse_color(value, label, number)
+        elif key == "force":
+            if value.lower() in TRUE_WORDS:
+                values[key] = True
+            elif value.lower() in FALSE_WORDS:
+                values[key] = False
+            else:
+                raise ConfigProblem(
+                    f"{label}:{number}: 'force' ожидает 1/0, true/false, "
+                    f"yes/no, да/нет, получено '{value}'")
+        else:
+            values[key] = value
+    return values
+
+
+def resolve_settings(args) -> Settings:
+    """Свести файл и аргументы: аргумент важнее файла, файл — умолчания."""
+    explicit = getattr(args, "config", None)
+    if explicit:
+        path = Path(explicit)
+        label = explicit
+    else:
+        path = DEFAULT_CONFIG
+        label = DEFAULT_CONFIG_LABEL
+    found = path.is_file()
+    file_values = read_config(path, label) if found else {}
+    settings = Settings(label, found)
+
+    def pick(key: str, argument, default=_MISSING) -> None:
+        if argument is not None:
+            settings.values[key] = argument
+            settings.sources[key] = "аргумент"
+        elif key in file_values:
+            settings.values[key] = file_values[key]
+            settings.sources[key] = "файл"
+        elif default is not _MISSING:
+            settings.values[key] = default
+            settings.sources[key] = "по умолчанию"
+        else:
+            settings.values[key] = None
+            settings.sources[key] = "не задано"
+
+    for key in ("layer_a", "layer_b"):
+        argument = getattr(args, key, None)
+        if argument:
+            settings.values[key] = argument
+            settings.sources[key] = "аргумент"
+        elif file_values.get(key):
+            settings.values[key] = file_values[key]
+            settings.sources[key] = "файл"
+        else:
+            settings.values[key] = None
+            settings.sources[key] = "не задано"
+
+    pick("radius", getattr(args, "radius", None), 5.0)
+    pick("scale", getattr(args, "scale", None), 400.0)
+    pick("text_height", getattr(args, "text_height", None), 2.0)
+    pick("force", getattr(args, "force", None), False)
+
+    excel_arg = getattr(args, "excel", None)
+    if excel_arg:
+        settings.values["excel"] = excel_arg
+        settings.sources["excel"] = "аргумент"
+    elif file_values.get("excel"):
+        settings.values["excel"] = file_values["excel"]
+        settings.sources["excel"] = "файл"
+    else:
+        settings.values["excel"] = None
+        settings.sources["excel"] = "по умолчанию"
+
+    file_color = file_values.get("color", _MISSING)
+    by_layer_arg = getattr(args, "by_layer", None)
+    if by_layer_arg is not None:
+        settings.by_layer = float(by_layer_arg)
+        settings.sources["color"] = "аргумент"
+        if settings.by_layer == 1:
+            settings.values["color"] = "by_layer"
+        elif isinstance(file_color, int):
+            settings.aci = file_color
+            settings.values["color"] = f"ACI {file_color}"
+        else:
+            settings.values["color"] = "ACI текущий"
+    elif isinstance(file_color, int):
+        settings.by_layer = 0.0
+        settings.aci = file_color
+        settings.values["color"] = f"ACI {file_color}"
+        settings.sources["color"] = "файл"
+    elif file_color == "by_layer":
+        settings.by_layer = 1.0
+        settings.values["color"] = "by_layer"
+        settings.sources["color"] = "файл"
+    else:
+        settings.by_layer = 1.0
+        settings.values["color"] = "by_layer"
+        settings.sources["color"] = "по умолчанию"
+    return settings
+
+
+def apply_settings(args, settings: Settings) -> None:
+    """Перенести итоговые значения в args: фазы читают их как раньше."""
+    for key in ("layer_a", "layer_b", "radius", "scale", "text_height",
+                "force", "excel"):
+        setattr(args, key, settings.values.get(key))
+    args.by_layer = settings.by_layer
+    args.aci = settings.aci
+
+
+def print_settings_source(settings: Settings) -> None:
+    if settings.found:
+        print(f"настройки: {settings.label}")
+    else:
+        print("настройки: аргументы командной строки "
+              f"(файл {settings.label} не найден)")
+
+
+def number_text(value) -> str:
+    number = float(value)
+    return str(int(number)) if number.is_integer() else str(number)
+
+
+def print_config(settings: Settings) -> None:
+    """Показать итоговые значения и источник каждого ключа."""
+    for key in ("layer_a", "layer_b"):
+        value = settings.value(key) or "—"
+        print(f"  {key} = {value} ({settings.sources[key]})")
+    print(f"  radius = {number_text(settings.value('radius'))} "
+          f"({settings.sources['radius']})")
+    print(f"  scale = {number_text(settings.value('scale'))} "
+          f"({settings.sources['scale']})")
+    print(f"  text_height = {number_text(settings.value('text_height'))} "
+          f"({settings.sources['text_height']})")
+    print(f"  color = {settings.value('color')} "
+          f"({settings.sources['color']})")
+    force = "да" if settings.value("force") else "нет"
+    print(f"  force = {force} ({settings.sources['force']})")
+    excel = settings.value("excel") or XLSX.name
+    print(f"  excel = {excel} ({settings.sources['excel']})")
+
+
+def missing_layers(args) -> list[str]:
+    return [name for name in ("layer_a", "layer_b")
+            if not getattr(args, name, None)]
+
+
+def print_missing_layers(args, settings: Settings) -> None:
+    names = " и ".join("--" + name.replace("_", "-")
+                       for name in missing_layers(args))
+    if settings.found:
+        print(f"СТОП: в файле {settings.label} не заданы слои: {names}.")
+        print("      Добавьте строки layer_a=… и layer_b=…"
+              " или передайте --layer-a/--layer-b.")
+    else:
+        print(f"СТОП: не заданы слои: {names}.")
+        print(f"      Создайте файл {settings.label} со строками"
+              " layer_a=… и layer_b=… или передайте --layer-a/--layer-b.")
 
 
 # ── фазы ─────────────────────────────────────────────────────────────────────
@@ -230,19 +474,24 @@ def phase_draw(args) -> int:
         removed = delete_arrows(layer_b)
         print(f"удалено старых объектов: {removed}")
 
+    set_aci = ""
+    if getattr(args, "aci", None) is not None:
+        set_aci = f' (lcm:config-set "ACI" {lisp_int(args.aci)})'
     expression = (
         "(progn"
         ' (setq lcm:cyc-old'
         ' (list (lcm:config-get "SCALE") (lcm:config-get "TEXT_HEIGHT")'
-        ' (lcm:config-get "BY_LAYER")))'
+        ' (lcm:config-get "BY_LAYER") (lcm:config-get "ACI")))'
         f' (lcm:config-set "SCALE" {lisp_num(args.scale)})'
         f' (lcm:config-set "TEXT_HEIGHT" {lisp_num(args.text_height)})'
         f' (lcm:config-set "BY_LAYER" {lisp_num(args.by_layer)})'
-        " (setq lcm:cyc-res (vl-catch-all-apply 'lcm:geo-run"
+        + set_aci
+        + " (setq lcm:cyc-res (vl-catch-all-apply 'lcm:geo-run"
         f" (list {lisp_str(layer_a)} {lisp_str(layer_b)} {lisp_num(args.radius)} T)))"
         ' (lcm:config-set "SCALE" (nth 0 lcm:cyc-old))'
         ' (lcm:config-set "TEXT_HEIGHT" (nth 1 lcm:cyc-old))'
         ' (lcm:config-set "BY_LAYER" (nth 2 lcm:cyc-old))'
+        ' (lcm:config-set "ACI" (nth 3 lcm:cyc-old))'
         " (if (vl-catch-all-error-p lcm:cyc-res)"
         ' (strcat "ERROR: " (vl-catch-all-error-message lcm:cyc-res))'
         " lcm:cyc-res))"
@@ -428,34 +677,48 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="phase", required=True)
 
-    sub.add_parser("status", help="AutoCAD, чертёж, LCM")
+    status = sub.add_parser("status", help="AutoCAD, чертёж, LCM")
+    status.add_argument("--config", metavar="PATH", default=None,
+                        help="файл настроек (status его не использует)")
 
     draw = sub.add_parser("draw", help="сопоставить и нарисовать стрелки")
+    add_config_args(draw)
     check_layers_args(draw)
-    draw.add_argument("--scale", type=float, default=400.0)
-    draw.add_argument("--text-height", type=float, default=2.0, dest="text_height")
-    draw.add_argument("--by-layer", type=float, default=1.0, dest="by_layer")
-    draw.add_argument("--force", action="store_true",
+    draw.add_argument("--scale", type=float, default=None,
+                      help="масштаб, по умолчанию 400")
+    draw.add_argument("--text-height", type=float, default=None,
+                      dest="text_height",
+                      help="высота текста, по умолчанию 2")
+    draw.add_argument("--by-layer", type=float, default=None, dest="by_layer",
+                      help="1 — цвет по слою, 0 — ACI из настроек")
+    draw.add_argument("--force", action="store_true", default=None,
                       help="перерисовать, удалив старые LINE/TEXT/SOLID слоя B")
     draw.add_argument("--dry-run", action="store_true", dest="dry_run",
                       help="только отчёт о сопоставлении, без изменений")
 
     table = sub.add_parser("table", help="построить ведомость отклонений")
+    add_config_args(table)
     check_layers_args(table)
 
     xlsx = sub.add_parser("xlsx", help="дописать блок в Excel")
-    xlsx.add_argument("--excel", default="",
+    add_config_args(xlsx)
+    xlsx.add_argument("--excel", default=None,
                       help="книга Excel (по умолчанию «Уч. 6 шпунт.xlsx» в корне)")
 
     allp = sub.add_parser("all", help="draw -> table -> xlsx")
+    add_config_args(allp)
     check_layers_args(allp)
-    allp.add_argument("--scale", type=float, default=400.0)
-    allp.add_argument("--text-height", type=float, default=2.0, dest="text_height")
-    allp.add_argument("--by-layer", type=float, default=1.0, dest="by_layer")
-    allp.add_argument("--force", action="store_true")
+    allp.add_argument("--scale", type=float, default=None,
+                      help="масштаб, по умолчанию 400")
+    allp.add_argument("--text-height", type=float, default=None,
+                      dest="text_height",
+                      help="высота текста, по умолчанию 2")
+    allp.add_argument("--by-layer", type=float, default=None, dest="by_layer",
+                      help="1 — цвет по слою, 0 — ACI из настроек")
+    allp.add_argument("--force", action="store_true", default=None)
     allp.add_argument("--dry-run", action="store_true", dest="dry_run")
     allp.add_argument("--keep-temp", action="store_true", dest="keep_temp")
-    allp.add_argument("--excel", default="",
+    allp.add_argument("--excel", default=None,
                       help="книга Excel (по умолчанию «Уч. 6 шпунт.xlsx» в корне)")
 
     draw.add_argument("--keep-temp", action="store_true", dest="keep_temp")
@@ -463,17 +726,44 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def add_config_args(target: argparse.ArgumentParser) -> None:
+    """Общие аргументы файла настроек для рабочих фаз."""
+    target.add_argument("--config", metavar="PATH", default=None,
+                        help="файл настроек (по умолчанию _tmp/lcm_run.cfg)")
+    target.add_argument("--show-config", action="store_true", dest="show_config",
+                        help="показать настройки и выйти, не обращаясь к AutoCAD")
+
+
 def check_layers_args(target: argparse.ArgumentParser) -> None:
     """Общие аргументы слоёв для фаз, которым они нужны."""
-    target.add_argument("--layer-a", required=True, help="слой нулевого цикла")
-    target.add_argument("--layer-b", required=True, help="слой последнего цикла")
-    target.add_argument("--radius", type=float, default=5.0,
+    target.add_argument("--layer-a", default=None, help="слой нулевого цикла")
+    target.add_argument("--layer-b", default=None, help="слой последнего цикла")
+    target.add_argument("--radius", type=float, default=None,
                         help="радиус пар, по умолчанию 5")
 
 
 def main() -> int:
     setup_stdout()
     args = build_parser().parse_args()
+    if args.phase != "status":
+        try:
+            settings = resolve_settings(args)
+        except ConfigProblem as exc:
+            print(f"СТОП: {exc}")
+            return 2
+        apply_settings(args, settings)
+        print_settings_source(settings)
+        requires_layers = args.phase in ("draw", "table", "all")
+        if getattr(args, "show_config", False):
+            print_config(settings)
+            if requires_layers and missing_layers(args):
+                print_missing_layers(args, settings)
+                return 2
+            return 0
+        if requires_layers and missing_layers(args):
+            print_missing_layers(args, settings)
+            return 2
+
     phases = {
         "status": lambda: phase_status(),
         "draw": lambda: phase_draw(args),
