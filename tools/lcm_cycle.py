@@ -140,7 +140,7 @@ def field(text: str, name: str) -> str:
 # ── настройки: файл _tmp/lcm_run.cfg и аргументы ────────────────────────────
 
 KNOWN_CONFIG_KEYS = ("layer_a", "layer_b", "radius", "scale", "text_height",
-                     "color", "force", "excel")
+                     "color", "force", "excel", "cycle")
 TRUE_WORDS = {"1", "true", "yes", "да"}
 FALSE_WORDS = {"0", "false", "no", "нет"}
 _MISSING = object()
@@ -219,6 +219,12 @@ def read_config(path: Path, label: str) -> dict[str, object]:
                 raise ConfigProblem(
                     f"{label}:{number}: 'force' ожидает 1/0, true/false, "
                     f"yes/no, да/нет, получено '{value}'")
+        elif key == "cycle":
+            if not re.fullmatch(r"\d+", value):
+                raise ConfigProblem(
+                    f"{label}:{number}: 'cycle' ожидает номер цикла "
+                    f"(0, 1, 58…), получено '{value}'")
+            values[key] = int(value)
         else:
             values[key] = value
     return values
@@ -267,6 +273,7 @@ def resolve_settings(args) -> Settings:
     pick("scale", getattr(args, "scale", None), 400.0)
     pick("text_height", getattr(args, "text_height", None), 2.0)
     pick("force", getattr(args, "force", None), False)
+    pick("cycle", getattr(args, "cycle", None))
 
     excel_arg = getattr(args, "excel", None)
     if excel_arg:
@@ -310,7 +317,7 @@ def resolve_settings(args) -> Settings:
 def apply_settings(args, settings: Settings) -> None:
     """Перенести итоговые значения в args: фазы читают их как раньше."""
     for key in ("layer_a", "layer_b", "radius", "scale", "text_height",
-                "force", "excel"):
+                "force", "excel", "cycle"):
         setattr(args, key, settings.values.get(key))
     args.by_layer = settings.by_layer
     args.aci = settings.aci
@@ -346,6 +353,11 @@ def print_config(settings: Settings) -> None:
     print(f"  force = {force} ({settings.sources['force']})")
     excel = settings.value("excel") or XLSX.name
     print(f"  excel = {excel} ({settings.sources['excel']})")
+    cycle = settings.value("cycle")
+    if cycle is None:
+        print("  cycle = по последнему блоку (по умолчанию)")
+    else:
+        print(f"  cycle = {cycle} ({settings.sources['cycle']})")
 
 
 def missing_layers(args) -> list[str]:
@@ -625,10 +637,12 @@ def phase_xlsx(args) -> int:
     shutil.copy2(book, backup)
     print(f"резервная копия: {backup.name}")
 
-    result = subprocess.run(
-        [python, str(TOOLS / "lcm_table_to_xlsx.py"), str(book), str(json_path)],
-        capture_output=True,
-    )
+    args_xlsx = [python, str(TOOLS / "lcm_table_to_xlsx.py"), str(book),
+                 str(json_path)]
+    cycle = getattr(args, "cycle", None)
+    if cycle is not None:
+        args_xlsx += ["--cycle", str(cycle)]
+    result = subprocess.run(args_xlsx, capture_output=True)
     if result.returncode != 0:
         print(f"СТОП: Excel не заполнен: {decode(result.stderr or result.stdout)}")
         return 1

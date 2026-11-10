@@ -82,8 +82,17 @@ def last_block_cycle(ws, start_col):
 
 
 def main():
-    xlsx = sys.argv[1] if len(sys.argv) > 1 else XLSX
-    data = sys.argv[2] if len(sys.argv) > 2 else DATA
+    argv = list(sys.argv[1:])
+    cycle = None
+    if "--cycle" in argv:
+        pos = argv.index("--cycle")
+        try:
+            cycle = int(argv[pos + 1])
+        except (IndexError, ValueError):
+            raise SystemExit("--cycle ожидает номер цикла, например --cycle 58")
+        del argv[pos:pos + 2]
+    xlsx = argv[0] if len(argv) > 0 else XLSX
+    data = argv[1] if len(argv) > 1 else DATA
     with open(data, encoding="utf-8-sig") as fh:
         raw = json.load(fh)
     rows = [r["value"] if isinstance(r, dict) and "value" in r else r for r in raw]
@@ -110,7 +119,11 @@ def main():
     # ---- шапка нового блока ----
     ws[f"{col(0)}1"] = ws["A1"].value        # «№ марки»
     ws[f"{col(1)}1"] = ws["B1"].value        # «Смещение по x и y (мм)»
-    ws[f"{col(1)}2"] = next_cycle(last_block_cycle(ws, c0))
+    if cycle is None:
+        label = next_cycle(last_block_cycle(ws, c0))
+    else:
+        label = f"Цикл {cycle} {date.today().strftime('%d.%m.%Y')}"
+    ws[f"{col(1)}2"] = label
     ws[f"{col(1)}3"] = ws["B3"].value        # «ΣΔX»
     ws[f"{col(2)}3"] = ws["C3"].value        # «ΣΔY»
     ws[f"{col(3)}3"] = ws["D3"].value        # «D»
