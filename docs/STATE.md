@@ -93,6 +93,7 @@
 | Хронология событий | [`docs/LOG.md`](LOG.md) — по строке на событие, `grep "^## \["` | да |
 | Снимки прошлой сессии DSH | генерируются `tools/last_session.cjs` в `docs/LAST_SESSION.md` (репозиторий и память) и `docs/LAST_SESSION_AUTOCAD.md` (чертежи); поток определяется по содержимому, `--stream` переопределяет | нет (в `.gitignore`) |
 | Мост к живому AutoCAD | `tools/cad_bridge.ps1` (COM → запущенный AutoCAD 2018): eval/load/dump/layers/shot/cmd/undo/cuix/report | да |
+| Запуск моста в песочнице | `tools/bridge.py` — то же самое через inline-PowerShell, `eval "@файл"` для длинных выражений; `tools/lcm_cells_to_json.py` — ячейки ведомости в JSON | да |
 | Отчёты работы | `reports/lcm_*.csv` | нет (в `.gitignore`) |
 | Таблица идентичности точек | `settings/lcm_aliases_<чертёж>.csv` | нет |
 | Настройки программы | `settings/lcm_settings.cfg` | нет |
@@ -146,6 +147,8 @@
 - **Ведомость `LCMDEV`** — как считается, почему допуск 0.1, что выяснилось про `AcDbTable` и escape-коды `Σ`/`Δ`: [`research/02-lcmdev-report.md`](research/02-lcmdev-report.md).
 - **Полный цикл стрелки → ведомость → Excel** — команды, правила второго блока, скилл `lcm-arrows-report`: [`research/03-arrows-to-excel.md`](research/03-arrows-to-excel.md).
 - **Мост к AutoCAD (COM)** — 10 глаголов, этапы 0–1, грабли и ограничения: [`research/04-cad-bridge.md`](research/04-cad-bridge.md).
+- **Запуск моста в песочнице DSH** — `tools/bridge.py`: `.ps1` не исполняется при низкой целостности, обёртка передаёт текст скрипта как команду, `eval "@файл"` — для длинных выражений: [`research/04-cad-bridge.md`](research/04-cad-bridge.md).
+- **Excel: блоки вплотную справа** — `tools/lcm_table_to_xlsx.py` дописывает новый блок (`A:D` → `E:H` → `I:L` → …) и не перезаписывает прежние; цикл — на 1 больше последнего блока: [`research/03-arrows-to-excel.md`](research/03-arrows-to-excel.md).
 - **Грабли AutoLISP** (`T` как имя переменной, `wcmatch` и кириллица): [`research/05-autolisp-pitfalls.md`](research/05-autolisp-pitfalls.md).
 - **Индекс памяти (FTS5)** — зачем появился, как починен для песочницы, `show`, `memory.json`, перенос базы в `.memory/`: [`research/01-memory-index.md`](research/01-memory-index.md).
 - **Уборка `reports/` — обязательна.** После задачи удаляются скриншоты `*.png`, `_table_cells.json`, `*.tmp`, `agent_dump*.csv`, старые резервные копии Excel (остаётся одна свежая), дубли отчётов LCM (остаётся по одному свежему на каждую пару слоёв и тип). Порядок — шаг 10 скилла `lcm-arrows-report`.
