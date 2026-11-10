@@ -16,6 +16,8 @@ git — всё в одном индексе. Зависимостей нет: т
     py -3 tools/memory_index.py update             # догон по mtime/size
     py -3 tools/memory_index.py status             # что в индексе
     py -3 tools/memory_index.py search "запрос" [--limit 8] [--kind md] [--json]
+    py -3 tools/memory_index.py defuns [имя]        # LISP-функции: аргументы, кого зовут
+    py -3 tools/memory_index.py callers "имя"       # кто вызывает LISP-функцию
 
 Поиск и status умеют работать с базой ТОЛЬКО ДЛЯ ЧТЕНИЯ: если каталог базы
 недоступен на запись, они открывают её в режиме read-only (индекс не свежеет,
@@ -36,6 +38,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -279,6 +282,243 @@ def git_docs(limit: int = 400) -> list[dict]:
             "size": len(subject),
         })
     return docs
+
+
+# ── разбор LISP: определения функций и кто кого вызывает ────────────────────
+# Индекс FTS5 отвечает «где встречается слово», но не «какие функции внутри и
+# кто их зовёт». Для вопросов о структуре кода — отдельный проход по *.lsp без
+# базы: build не нужен, всегда видны текущие файлы. Кодировку разбирает
+# read_text(), поэтому cp1251-модули читаются правильно.
+
+_LISP_DEFUN_RE = re.compile(r"\(\s*defun\s+([^\s()]+)", re.IGNORECASE)
+_LISP_CALL_RE = re.compile(r"\(\s*([A-Za-z0-9_:*+\-<>=?!$%&~^./]+)")
+_LISP_QUOTED_RE = re.compile(r"'([A-Za-z0-9_:\-]+)")
+
+
+def mask_lisp(text: str) -> str:
+    """Строки и комментарии → пробелы; длины и переводы строк сохраняются.
+
+    Нужно, чтобы скобки и «defun» внутри строк и комментариев не попадали в
+    разбор. Смещения символов не меняются, поэтому по ним считается строка.
+    """
+    out = list(text)
+    i, n = 0, len(text)
+    in_str = in_block = False
+    while i < n:
+        ch = text[i]
+        nxt = text[i + 1] if i + 1 < n else ""
+        if in_str:
+            if ch == "\\":
+                out[i] = " "
+                i += 1
+                if i < n and text[i] != "\n":
+                    out[i] = " "
+                    i += 1
+                continue
+            if ch == '"':
+                in_str = False
+            if ch != "\n":
+                out[i] = " "
+            i += 1
+            continue
+        if in_block:
+            if ch == "|" and nxt == ";":
+                out[i] = " "
+                out[i + 1] = " "
+                i += 2
+                in_block = False
+                continue
+            if ch != "\n":
+                out[i] = " "
+            i += 1
+            continue
+        if ch == '"':
+            in_str = True
+            out[i] = " "
+            i += 1
+            continue
+        if ch == ";":
+            if nxt == "|":
+                out[i] = " "
+                out[i + 1] = " "
+                i += 2
+                in_block = True
+                continue
+            while i < n and text[i] != "\n":
+                out[i] = " "
+                i += 1
+            continue
+        i += 1
+    return "".join(out)
+
+
+def lisp_parens(masked: str) -> dict[int, int]:
+    """Пары «открывающая → закрывающая» скобка для замаскированного текста."""
+    stack: list[int] = []
+    pairs: dict[int, int] = {}
+    for i, ch in enumerate(masked):
+        if ch == "(":
+            stack.append(i)
+        elif ch == ")" and stack:
+            pairs[stack.pop()] = i
+    return pairs
+
+
+def lisp_defuns(path: Path, rel: str) -> list[dict]:
+    """Все (defun …) файла: имя, аргументы, локальные, счётчик вызовов."""
+    text = read_text(path)
+    masked = mask_lisp(text)
+    pairs = lisp_parens(masked)
+    out: list[dict] = []
+    for m in _LISP_DEFUN_RE.finditer(masked):
+        open_pos = m.start()
+        defun_close = pairs.get(open_pos)
+        args_open = masked.find("(", m.end())
+        args_close = pairs.get(args_open) if args_open != -1 else None
+        if defun_close is None or args_close is None or args_close > defun_close:
+            continue
+        name = m.group(1)
+        args_raw = " ".join(masked[args_open + 1:args_close].split())
+        args_part, _, locals_part = args_raw.partition("/")
+        body = masked[args_close + 1:defun_close]
+        calls = Counter(m2.group(1).lower() for m2 in _LISP_CALL_RE.finditer(body))
+        # функции проекта часто передаются котировкой: (vl-catch-all-apply 'lcm:x …)
+        for q in _LISP_QUOTED_RE.finditer(body):
+            if q.group(1).lower().startswith(("lcm:", "c:")):
+                calls[q.group(1).lower()] += 1
+        out.append({
+            "name": name,
+            "file": rel,
+            "line": text.count("\n", 0, open_pos) + 1,
+            "args": args_part.split(),
+            "locals": locals_part.split(),
+            "calls": calls,
+        })
+    return out
+
+
+def all_lisp_defuns() -> list[dict]:
+    """Разбор всех *.lsp проекта (кроме служебных каталогов)."""
+    defs: list[dict] = []
+    for path in sorted(ROOT.rglob("*.lsp")):
+        rel = path.relative_to(ROOT)
+        if any(part in SKIP_DIRS for part in rel.parts):
+            continue
+        try:
+            defs.extend(lisp_defuns(path, str(rel).replace("\\", "/")))
+        except OSError:
+            continue
+    return defs
+
+
+def _project_calls(defun: dict) -> dict[str, int]:
+    """Вызовы функций проекта (lcm:…, C:…), без встроенных AutoLISP."""
+    return {k: v for k, v in defun["calls"].items() if k.startswith(("lcm:", "c:"))}
+
+
+def _defun_callers(defs: list[dict], target: str) -> list[dict]:
+    """Кто вызывает функцию (без учёта регистра), с числом вхождений."""
+    rows = []
+    for d in defs:
+        n = d["calls"].get(target)
+        if n:
+            rows.append({"caller": d["name"], "file": d["file"],
+                         "line": d["line"], "count": n})
+    rows.sort(key=lambda r: (-r["count"], r["caller"].lower()))
+    return rows
+
+
+def cmd_defuns(name: str = "", as_json: bool = False) -> None:
+    """`defuns` — список всех функций; `defuns <имя>` — разбор одной."""
+    defs = all_lisp_defuns()
+    if not defs:
+        raise RuntimeError("файлы *.lsp не найдены в проекте")
+
+    if not name:
+        rows = [{"name": d["name"], "file": d["file"], "line": d["line"],
+                 "calls": sum(d["calls"].values())} for d in defs]
+        rows.sort(key=lambda r: r["name"].lower())
+        if as_json:
+            print(json.dumps(rows, ensure_ascii=False, indent=2))
+            return
+        width = max(len(r["name"]) for r in rows)
+        print(f"{'ФУНКЦИЯ':<{width}}  ГДЕ                      ВЫЗОВОВ")
+        for r in rows:
+            print(f"{r['name']:<{width}}  {r['file']}:{r['line']:<7} {r['calls']}")
+        print(f"\nвсего определений: {len(rows)} "
+              f"в {len({r['file'] for r in rows})} файлах")
+        return
+
+    target = name.lower()
+    matches = [d for d in defs if d["name"].lower() == target]
+    if not matches:
+        raise RuntimeError(f"функция «{name}» не найдена — список: defuns")
+
+    callers = _defun_callers(defs, target)
+    if as_json:
+        payload = []
+        for d in matches:
+            payload.append({
+                "name": d["name"], "file": d["file"], "line": d["line"],
+                "args": d["args"], "locals": d["locals"],
+                "calls_total": sum(d["calls"].values()),
+                "calls_project": _project_calls(d),
+                "callers": callers,
+            })
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+
+    for d in matches:
+        proj = _project_calls(d)
+        print(f"{d['name']} — {d['file']}:{d['line']}")
+        print(f"  аргументы: {' '.join(d['args']) or '—'}")
+        if d["locals"]:
+            print(f"  локальные: {' '.join(d['locals'])}")
+        print(f"  всего вызовов в теле: {sum(d['calls'].values())}")
+        if proj:
+            print("  вызывает функции проекта:")
+            for fn, cnt in sorted(proj.items(), key=lambda kv: (-kv[1], kv[0])):
+                print(f"    {fn:<34} ×{cnt}")
+        rest = {k: v for k, v in d["calls"].items() if k not in proj}
+        top = sorted(rest.items(), key=lambda kv: (-kv[1], kv[0]))[:5]
+        if top:
+            print("  чаще всего встроенные/COM: "
+                  + ", ".join(f"{k} ×{v}" for k, v in top))
+        if callers:
+            print("  кто вызывает:")
+            for r in callers:
+                print(f"    {r['caller']:<34} ×{r['count']}  "
+                      f"({r['file']}:{r['line']})")
+        else:
+            print("  кто вызывает: никто (входная команда или пока не используется)")
+        print()
+
+
+def cmd_callers(name: str, as_json: bool = False) -> None:
+    """Кто вызывает LISP-функцию и где она определена."""
+    defs = all_lisp_defuns()
+    target = name.lower()
+    defined = [d for d in defs if d["name"].lower() == target]
+    if not defined:
+        raise RuntimeError(f"функция «{name}» не найдена — список: defuns")
+    rows = _defun_callers(defs, target)
+    if as_json:
+        print(json.dumps({"function": defined[0]["name"],
+                          "defined": [{"file": d["file"], "line": d["line"]}
+                                      for d in defined],
+                          "callers": rows}, ensure_ascii=False, indent=2))
+        return
+    print(f"{defined[0]['name']} определена в: "
+          + ", ".join(f"{d['file']}:{d['line']}" for d in defined))
+    if not rows:
+        print("вызовов из других функций проекта нет")
+        return
+    width = max(len(r["caller"]) for r in rows)
+    print(f"{'КТО ЗОВЁТ':<{width}}  ГДЕ                      РАЗ")
+    for r in rows:
+        print(f"{r['caller']:<{width}}  {r['file']}:{r['line']:<7} {r['count']}")
+    print(f"\nвсего вызовов: {sum(r['count'] for r in rows)} "
+          f"из {len(rows)} функций")
 
 
 def scan_disk() -> dict[str, dict]:
@@ -672,6 +912,13 @@ def main() -> int:
     sub.add_parser("status", help="состояние индекса")
     p_init = sub.add_parser("init", help="записать memory.json со значениями по умолчанию")
     p_init.add_argument("--force", action="store_true", help="перезаписать существующий")
+    p_defs = sub.add_parser("defuns", help="LISP-функции: список или разбор одной")
+    p_defs.add_argument("name", nargs="?", default="",
+                        help="имя функции, напр. lcm:draw-arrow")
+    p_defs.add_argument("--json", action="store_true", dest="as_json")
+    p_call = sub.add_parser("callers", help="кто вызывает LISP-функцию")
+    p_call.add_argument("name", help="имя функции, напр. lcm:run")
+    p_call.add_argument("--json", action="store_true", dest="as_json")
     s = sub.add_parser("search", help="полнотекстовый поиск")
     s.add_argument("query")
     s.add_argument("--limit", type=int, default=8)
@@ -707,6 +954,10 @@ def main() -> int:
             print(json.dumps(status(), ensure_ascii=False, indent=2))
         elif args.cmd == "init":
             print(f"конфиг записан: {write_default_config(force=args.force)}")
+        elif args.cmd == "defuns":
+            cmd_defuns(args.name, as_json=args.as_json)
+        elif args.cmd == "callers":
+            cmd_callers(args.name, as_json=args.as_json)
         elif args.cmd == "show":
             body, meta = show(args.path, at=args.at, line_range=args.lines,
                               max_lines=args.max_lines, context=args.context,

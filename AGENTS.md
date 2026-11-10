@@ -23,6 +23,8 @@
 py -3 tools/memory_index.py status | build | update
 py -3 tools/memory_index.py search "запрос" [--kind md] [--limit 3]
 py -3 tools/memory_index.py show README.md --at "7.10" --section
+py -3 tools/memory_index.py defuns lcm:draw-arrow   # что внутри: аргументы, вызовы
+py -3 tools/memory_index.py callers lcm:run         # кто вызывает функцию
 ```
 
 1. На вопрос «где / когда / почему / что решили» — сначала `search`, а не чтение README или `STATE.md` целиком.
@@ -30,6 +32,7 @@ py -3 tools/memory_index.py show README.md --at "7.10" --section
 3. `search` сам догоняет изменения; `--no-update` отключает, `--any` ослабляет до ИЛИ, `--raw` — синтаксис FTS5.
 4. Кодировки определяются по содержимому (UTF-8 / BOM / cp1251): обычный grep по cp1251-кириллице **не находит**.
 5. Индекс производный — коммитить нечего. Если `db_dir` смотрит наружу, `search` откроет базу только для чтения и предупредит.
+6. На вопрос «какие функции внутри / кто вызывает / сколько вызовов» — `defuns <имя>` и `callers <имя>` (разбор `*.lsp`, база не нужна), а не grep по файлам.
 
 ## Кодировки — самое важное
 
