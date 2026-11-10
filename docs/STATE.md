@@ -146,6 +146,7 @@
 - **Проверено на двух объектах:** «Уч.4» (серия циклов 0→50→51→52) и «Уч.6» (11 пар, циклы 0→1). На чертежах с другой плотностью точек сначала запускать `LCMSTATS` и смотреть `p05`: от него зависит порог строгого правила в цепочке циклов.
 - **Ведомость `LCMDEV`** — как считается, почему допуск 0.1, что выяснилось про `AcDbTable` и escape-коды `Σ`/`Δ`: [`research/02-lcmdev-report.md`](research/02-lcmdev-report.md).
 - **Полный цикл стрелки → ведомость → Excel** — команды, правила второго блока, скилл `lcm-arrows-report`: [`research/03-arrows-to-excel.md`](research/03-arrows-to-excel.md).
+- **Цикл одной командой (10.11.2026).** `tools/lcm_cycle.py` (`draw|table|xlsx|all`, `--dry-run`, `--force`, `--excel`): проверки и откат внутри скрипта, один вызов вместо 8–18. Детали — [`research/03-arrows-to-excel.md`](research/03-arrows-to-excel.md).
 - **Мост к AutoCAD (COM)** — 10 глаголов, этапы 0–1, грабли и ограничения: [`research/04-cad-bridge.md`](research/04-cad-bridge.md).
 - **Запуск моста в песочнице DSH** — `tools/bridge.py`: `.ps1` не исполняется при низкой целостности, обёртка передаёт текст скрипта как команду, `eval "@файл"` — для длинных выражений: [`research/04-cad-bridge.md`](research/04-cad-bridge.md).
 - **Excel: блоки вплотную справа** — `tools/lcm_table_to_xlsx.py` дописывает новый блок (`A:D` → `E:H` → `I:L` → …) и не перезаписывает прежние; цикл — на 1 больше последнего блока: [`research/03-arrows-to-excel.md`](research/03-arrows-to-excel.md).

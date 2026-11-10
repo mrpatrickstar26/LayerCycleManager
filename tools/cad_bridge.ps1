@@ -164,7 +164,18 @@ function Invoke-Lisp {
         Start-Sleep -Milliseconds 120
     }
 
-    $text = [IO.File]::ReadAllText($result, $Script:Cp1251)
+    # Файл только что создан AutoCAD — он может быть ещё открыт на запись.
+    $readDeadline = (Get-Date).AddSeconds(5)
+    while ($true) {
+        try {
+            $text = [IO.File]::ReadAllText($result, $Script:Cp1251)
+            break
+        }
+        catch [System.IO.IOException] {
+            if ((Get-Date) -gt $readDeadline) { throw }
+            Start-Sleep -Milliseconds 50
+        }
+    }
     Remove-Item -LiteralPath $result -Force -ErrorAction SilentlyContinue
 
     # Файл результата: первая строка "OK|" или "ERR|<сообщение>", далее — значение

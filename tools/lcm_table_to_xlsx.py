@@ -11,7 +11,9 @@
   * где в AutoCAD прочерк или марки нет — в Excel тоже прочерк.
 
 Запуск:
-    python tools/lcm_table_to_xlsx.py
+    python tools/lcm_table_to_xlsx.py [книга.xlsx] [ячейки.json]
+
+Без аргументов — «Уч. 6 шпунт.xlsx» и reports/_table_cells.json в корне проекта.
 """
 import json
 import os
@@ -80,7 +82,9 @@ def last_block_cycle(ws, start_col):
 
 
 def main():
-    with open(DATA, encoding="utf-8-sig") as fh:
+    xlsx = sys.argv[1] if len(sys.argv) > 1 else XLSX
+    data = sys.argv[2] if len(sys.argv) > 2 else DATA
+    with open(data, encoding="utf-8-sig") as fh:
         raw = json.load(fh)
     rows = [r["value"] if isinstance(r, dict) and "value" in r else r for r in raw]
 
@@ -90,7 +94,7 @@ def main():
         if dx is not None:
             drawn[mark_key(row[0])] = (dx, to_number(row[2]), to_number(row[3]))
 
-    wb = load_workbook(XLSX)
+    wb = load_workbook(xlsx)
     ws = wb.active
     # Столбец D содержит формулы — просим Excel пересчитать их при открытии
     wb.calculation.fullCalcOnLoad = True
@@ -150,8 +154,8 @@ def main():
     for i in range(BLOCK_WIDTH):
         ws.column_dimensions[col(i)].width = ws.column_dimensions[get_column_letter(1 + i)].width
 
-    wb.save(XLSX)
-    print(f"готово: {XLSX}; блок {col(0)}:{col(3)}; "
+    wb.save(xlsx)
+    print(f"готово: {xlsx}; блок {col(0)}:{col(3)}; "
           f"цикл: {ws[f'{col(1)}2'].value}; марок с отклонениями: {filled}")
 
 
