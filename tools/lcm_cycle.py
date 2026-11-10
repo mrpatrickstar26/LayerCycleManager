@@ -54,7 +54,6 @@ ROOT = Path(__file__).resolve().parent.parent
 TOOLS = ROOT / "tools"
 BRIDGE = TOOLS / "bridge.py"
 REPORTS = ROOT / "reports"
-XLSX = ROOT / "Уч. 6 шпунт.xlsx"
 TEMP = Path(tempfile.gettempdir()) / "lcm_cycle"
 DEFAULT_CONFIG = ROOT.parent / "_tmp" / "lcm_run.cfg"
 DEFAULT_CONFIG_LABEL = "_tmp/lcm_run.cfg"
@@ -351,7 +350,7 @@ def print_config(settings: Settings) -> None:
           f"({settings.sources['color']})")
     force = "да" if settings.value("force") else "нет"
     print(f"  force = {force} ({settings.sources['force']})")
-    excel = settings.value("excel") or XLSX.name
+    excel = settings.value("excel") or "— (не задано)"
     print(f"  excel = {excel} ({settings.sources['excel']})")
     cycle = settings.value("cycle")
     if cycle is None:
@@ -595,7 +594,11 @@ def phase_xlsx(args) -> int:
     if python is None:
         print("СТОП: не найден Python с openpyxl (задайте LCM_PYTHON).")
         return 1
-    book = Path(args.excel) if getattr(args, "excel", None) else XLSX
+    if not getattr(args, "excel", None):
+        print("СТОП: не указана книга Excel: добавьте excel=<файл.xlsx> "
+              "в настройки или передайте --excel.")
+        return 1
+    book = Path(args.excel)
     if not book.is_file():
         print(f"СТОП: нет файла Excel: {book}")
         return 1
@@ -717,7 +720,7 @@ def build_parser() -> argparse.ArgumentParser:
     xlsx = sub.add_parser("xlsx", help="дописать блок в Excel")
     add_config_args(xlsx)
     xlsx.add_argument("--excel", default=None,
-                      help="книга Excel (по умолчанию «Уч. 6 шпунт.xlsx» в корне)")
+                      help="книга Excel (обязательна, если не задана в настройках)")
 
     allp = sub.add_parser("all", help="draw -> table -> xlsx")
     add_config_args(allp)
@@ -733,7 +736,7 @@ def build_parser() -> argparse.ArgumentParser:
     allp.add_argument("--dry-run", action="store_true", dest="dry_run")
     allp.add_argument("--keep-temp", action="store_true", dest="keep_temp")
     allp.add_argument("--excel", default=None,
-                      help="книга Excel (по умолчанию «Уч. 6 шпунт.xlsx» в корне)")
+                      help="книга Excel (обязательна, если не задана в настройках)")
 
     draw.add_argument("--keep-temp", action="store_true", dest="keep_temp")
     table.add_argument("--keep-temp", action="store_true", dest="keep_temp")
