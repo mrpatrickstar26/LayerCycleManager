@@ -33,7 +33,7 @@ INDEX = RESEARCH / "INDEX.md"
 STATE = ROOT / "docs" / "STATE.md"
 CONFIG = ROOT / "memory.json"
 
-LIMIT_AGENTS = 12288          # 12 КБ: столько вклеивается в каждую сессию
+LIMIT_AGENTS = 13312          # 13 КБ: столько вклеивается в каждую сессию
 LIMIT_STATE = 40960           # 40 КБ: STATE.md — справочник, а не свалка
 REQUIRED_FIELDS = ("**Статус:**", "**Решение:**")
 LINK_RE = re.compile(r"\]\(([^)#]+\.md)\)")
