@@ -170,7 +170,15 @@ function Invoke-Lisp {
 
     Assert-Idle
     $doc = Get-AcadDoc
-    Invoke-ComRetry { $doc.SendCommand("(load `"$exprLisp`") ") }
+    # Папка TEMP не входит в доверенные пути AutoCAD, поэтому простой (load)
+    # каждый раз вызывает диалог «Безопасность — исполняемый файл без подписи».
+    # SECURELOAD снимается только на время загрузки своего же файла и сразу
+    # возвращается; постоянные настройки безопасности пользователя не меняются.
+    $loadCommand = "(progn (setq __sl (getvar `"SECURELOAD`")) " +
+                   "(setvar `"SECURELOAD`" 0) " +
+                   "(setq __lr (vl-catch-all-apply (function (lambda () (load `"$exprLisp`"))))) " +
+                   "(setvar `"SECURELOAD`" __sl) __lr)"
+    Invoke-ComRetry { $doc.SendCommand(($loadCommand + ' ')) }
 
     $text = $null
     try {
