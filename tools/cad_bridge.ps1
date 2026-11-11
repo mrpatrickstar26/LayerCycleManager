@@ -126,8 +126,10 @@ function Format-LispPath {
 }
 
 function New-ExprPath {
-    # Временный .lsp для передачи длинного выражения — см. Invoke-Lisp.
-    $dir = Join-Path $env:TEMP 'lcm_bridge'
+    # Временный .lsp для передачи выражения — внутри проекта: папка проекта в
+    # доверенных путях AutoCAD (TRUSTEDPATHS), поэтому (load) не спрашивает
+    # подтверждения. См. Invoke-Lisp.
+    $dir = Join-Path $Script:Root 'reports\_bridge'
     if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
     Join-Path $dir ('{0}.lsp' -f ([guid]::NewGuid().ToString('N')))
 }
@@ -170,15 +172,9 @@ function Invoke-Lisp {
 
     Assert-Idle
     $doc = Get-AcadDoc
-    # Папка TEMP не входит в доверенные пути AutoCAD, поэтому простой (load)
-    # каждый раз вызывает диалог «Безопасность — исполняемый файл без подписи».
-    # SECURELOAD снимается только на время загрузки своего же файла и сразу
-    # возвращается; постоянные настройки безопасности пользователя не меняются.
-    $loadCommand = "(progn (setq __sl (getvar `"SECURELOAD`")) " +
-                   "(setvar `"SECURELOAD`" 0) " +
-                   "(setq __lr (vl-catch-all-apply (function (lambda () (load `"$exprLisp`"))))) " +
-                   "(setvar `"SECURELOAD`" __sl) __lr)"
-    Invoke-ComRetry { $doc.SendCommand(($loadCommand + ' ')) }
+    # Файл лежит в reports\_bridge, то есть внутри доверенной папки проекта:
+    # (load) не вызывает диалог безопасности, SECURELOAD не трогаем.
+    Invoke-ComRetry { $doc.SendCommand("(load `"$exprLisp`") ") }
 
     $text = $null
     try {
