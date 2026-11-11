@@ -800,7 +800,14 @@ def show(rel: str, at: str = "", line_range: str = "",
 
 def search(query: str, limit: int = 8, kind: str = "", folder: str = "",
            prefix: bool = False, auto_update: bool = True,
-           any_term: bool = False, raw: bool = False) -> list[dict]:
+           any_term: bool = False, raw: bool = False,
+           no_git: bool = False, git_limit: int = 2) -> list[dict]:
+    """Поиск по индексу: сначала файлы с местом попадания, потом история git.
+
+    Коммит отвечает «почему и когда», но места в файлах не даёт, поэтому он не
+    должен вытеснять документ из верхушки выдачи: файлы идут отдельным блоком,
+    история — коротким хвостом (по умолчанию 2 записи).
+    """
     path = db_path()
     if not path.exists():
         raise RuntimeError(f"индекс не построен ({path}) — запустите: build")
@@ -819,11 +826,11 @@ def search(query: str, limit: int = 8, kind: str = "", folder: str = "",
     # отчётов глушат markdown и lisp в выдаче.
     weight = ("CASE kind WHEN 'csv' THEN 0.70 WHEN 'git' THEN 0.95 "
               "WHEN 'md' THEN 1.05 ELSE 1.0 END")
-    sql = ("SELECT path, folder, kind, title,"
-           " snippet(notes_fts, 3, '«', '»', '…', 14) AS snip,"
-           f" bm25(notes_fts, 10.0, 4.0, 6.0, 1.0) * ({weight}) AS rank"
-           " FROM notes_fts WHERE notes_fts MATCH ?")
-    tail = sql
+    head = ("SELECT path, folder, kind, title,"
+            " snippet(notes_fts, 3, '«', '»', '…', 14) AS snip,"
+            f" bm25(notes_fts, 10.0, 4.0, 6.0, 1.0) * ({weight}) AS rank"
+            " FROM notes_fts WHERE notes_fts MATCH ?")
+    tail = ""
     params_tail: list = []
     if kind:
         tail += " AND kind = ?"
@@ -831,28 +838,41 @@ def search(query: str, limit: int = 8, kind: str = "", folder: str = "",
     if folder:
         tail += " AND (folder = ? OR folder LIKE ?)"
         params_tail += [folder, folder.rstrip("/") + "%"]
-    tail += " ORDER BY rank LIMIT ?"
-    params_tail.append(max(1, limit))
 
     conn, readonly = open_read(path)
     if readonly:
         NOTES["readonly"] = "1"
     try:
         expr = query if raw else build_query(query, prefix=prefix, any_term=any_term)
-        rows = conn.execute(tail, [expr, *params_tail]).fetchall()
         # Живая формулировка вопроса («что решили про допуск…») не всегда
         # содержит все слова сразу — ослабляем до ИЛИ и пробуем ещё раз.
-        if not rows and not any_term:
-            rows = conn.execute(tail, [build_query(query, prefix=prefix, any_term=True),
-                                       *params_tail]).fetchall()
+        loose = build_query(query, prefix=prefix, any_term=True)
+
+        def fetch(extra: str, count: int) -> list[tuple]:
+            sql = head + tail + extra + " ORDER BY rank LIMIT ?"
+            for e in ([expr] if (raw or any_term) else [expr, loose]):
+                rows = conn.execute(sql, [e, *params_tail, count]).fetchall()
+                if rows:
+                    return rows
+            return []
+
+        files: list[tuple] = []
+        history: list[tuple] = []
+        if kind == "git":
+            history = fetch("", max(1, limit))
+        else:
+            files = fetch(" AND kind <> 'git'", max(1, limit))
+            if not no_git and not kind and git_limit > 0:
+                history = fetch(" AND kind = 'git'", git_limit)
     finally:
         conn.close()
     out = []
-    for p, f, k, t, s, r in rows:
-        line, head = locate(p, query) if k != "git" else (0, "")
-        out.append({"path": p, "folder": f, "kind": k, "title": t,
-                    "snippet": " ".join(s.split()), "score": round(-r, 3),
-                    "line": line, "heading": head})
+    for group, rows in (("files", files), ("history", history)):
+        for p, f, k, t, s, r in rows:
+            line, hd = locate(p, query) if k != "git" else (0, "")
+            out.append({"path": p, "folder": f, "kind": k, "title": t,
+                        "snippet": " ".join(s.split()), "score": round(-r, 3),
+                        "line": line, "heading": hd, "group": group})
     return out
 
 
@@ -931,6 +951,10 @@ def main() -> int:
     s.add_argument("--no-update", action="store_true")
     s.add_argument("--any", action="store_true", dest="any_term",
                    help="любое из слов (ИЛИ) вместо всех сразу")
+    s.add_argument("--no-git", action="store_true", dest="no_git",
+                   help="не показывать историю git")
+    s.add_argument("--git-limit", type=int, default=2, dest="git_limit",
+                   help="сколько коммитов показывать после файлов (по умолчанию 2)")
     p_show = sub.add_parser("show", help="показать нужный кусок файла")
     p_show.add_argument("path", help="путь из выдачи search, напр. README.md")
     p_show.add_argument("--at", default="",
@@ -971,7 +995,8 @@ def main() -> int:
         else:
             results = search(args.query, limit=args.limit, kind=args.kind,
                              folder=args.folder, prefix=args.prefix, raw=args.raw,
-                             auto_update=not args.no_update, any_term=args.any_term)
+                             auto_update=not args.no_update, any_term=args.any_term,
+                             no_git=args.no_git, git_limit=args.git_limit)
             if NOTES.get("update"):
                 print(f"· индекс не обновлён ({NOTES['update']}); выдача может быть неполной",
                       file=sys.stderr)
@@ -980,8 +1005,14 @@ def main() -> int:
             elif not results:
                 print("ничего не найдено")
             else:
-                for r in results:
+                for r in (x for x in results if x["group"] == "files"):
                     _print_hit(r)
+                hist = [x for x in results if x["group"] == "history"]
+                if hist:
+                    if any(x["group"] == "files" for x in results):
+                        print("· история git (почему и когда; где сейчас — в файлах выше):")
+                    for r in hist:
+                        _print_hit(r)
     except (ValueError, RuntimeError) as exc:
         print(f"ОШИБКА: {exc}", file=sys.stderr)
         return 1
