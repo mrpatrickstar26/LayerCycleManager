@@ -223,7 +223,6 @@ Remove-Item "reports\_table_cells.json" -Force -ErrorAction SilentlyContinue
 Remove-Item "reports\*.tmp" -Force -ErrorAction SilentlyContinue
 Remove-Item "reports\_write_test.txt" -Force -ErrorAction SilentlyContinue
 Remove-Item "reports\agent_dump*.csv" -Force -ErrorAction SilentlyContinue
-Remove-Item "reports\_bridge\*" -Force -ErrorAction SilentlyContinue
 
 # 2. резервные копии книг Excel — по одной самой свежей на каждую книгу
 Get-ChildItem "reports\_backup_*.xlsx" -ErrorAction SilentlyContinue |
@@ -252,7 +251,7 @@ $csv | Group-Object { ($_.BaseName -replace '_\d{8,14}$','') } | ForEach-Object 
 ## Правила и грабли (проверено)
 
 1. **Excel строить всегда**, если пользователь явно не сказал «без таблицы»: стрелки без ведомости и блока в Excel — незаконченная задача.
-2. **Длинные LISP-выражения.** Мост передаёт выражение временным файлом и грузит через `(load "…")`, поэтому длина не ограничена. Вручную через `SendCommand` по-прежнему держать короче ~500 символов: обрывок длинного текста AutoCAD выполняет как отдельные команды — 11.11.2026 так открылся диалог `LCM`, после чего COM отвечал `RPC_E_CALL_REJECTED`, а шаг Excel упал на «файл занят».
+2. **Длинные LISP-выражения.** Мост режет текст на куски по ~300 символов, собирает их в переменную (`strcat`) и выполняет `(eval (read …))`, поэтому длина не ограничена и файлы не нужны. Вручную в `SendCommand` по-прежнему держать короче ~500 символов: обрывок длинного текста AutoCAD выполняет как отдельные команды — 11.11.2026 так открылся диалог `LCM`, после чего COM отвечал `RPC_E_CALL_REJECTED`, а шаг Excel упал на «файл занят».
 3. **`T` нельзя использовать как имя переменной** в AutoLISP — это константа (ошибка «неверный объект для внедрения: T»).
 4. **Кодировки:** `.lsp` — Windows-1251 + CRLF; `.ps1` — UTF-8 с BOM; `.md`, `.py` — UTF-8, переводы строк CRLF.
 5. **Не вызывать интерактивные** `LCM`, `LCMCHAIN`, `LCMGEOFILL` — они ждут ввода. Только функции: `lcm:geo-run`, `lcm:chain-run`, `lcm:dev-table`.
@@ -270,7 +269,7 @@ $csv | Group-Object { ($_.BaseName -replace '_\d{8,14}$','') } | ForEach-Object 
 17. **LISP-выражение с кавычками — только файлом.** Если передать его строкой в командной строке инструмента (`eval "(progn … \"слой\" …)"`), оболочка рвёт его по пробелам: «A positional parameter cannot be found that accepts argument». Любое выражение со строковыми литералами — файлом в `_tmp\` и `eval "@..\_tmp\имя.lsp"`.
 18. **`RPC_E_CALL_REJECTED` («Call was rejected by callee»)** — AutoCAD занят: в командной строке активна команда или запрос (иногда после автоматизации), реже — модальный диалог. Диагностика: `[Runtime.InteropServices.Marshal]::GetActiveObject('AutoCAD.Application').GetAcadState().IsQuiescent` — `False` значит занят, `True` — свободен (проверено 11.11.2026). Лечение: активировать окно AutoCAD и послать `{ESC}` дважды (`SetForegroundWindow` + `SendKeys`), либо попросить пользователя нажать Esc; после этого мост снова работает. Признак диалога — видимое окно класса `#32770` в перечислении окон процесса. Не повторять вызов вслепую: сначала снять занятость.
 19. **LCM после перезапуска AutoCAD не загружен** — первый вызов падает с `no function definition: LCM:CONFIG-GET`. Лечится `py -3 tools\bridge.py load lcm_main.lsp`, после чего повторить прогон.
-20. **Диалог «Безопасность — исполняемый файл без подписи».** Появляется при `SECURELOAD` = 1, если файл грузится вне доверенных путей. Мост держит файл выражения в `reports\_bridge` **внутри папки проекта**, поэтому папка проекта должна быть в `TRUSTEDPATHS` (ОПЦИИ → Файлы → Доверенные расположения; проверить — `(getvar "TRUSTEDPATHS")`). Если её там нет, AutoCAD спросит про каждый файл, а «Всегда загружать» не поможет: имя временного файла каждый раз новое.
+20. **Диалог «Безопасность — исполняемый файл без подписи».** Мост не создаёт файлов и не вызывает `(load)`, поэтому такого диалога быть не должно. Если он появился — значит файл грузится вручную: подтвердить один раз либо добавить папку в `TRUSTEDPATHS` (ОПЦИИ → Файлы → Доверенные расположения; проверить — `(getvar "TRUSTEDPATHS")`).
 
 ## Если параметры не названы
 

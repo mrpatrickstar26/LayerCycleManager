@@ -125,15 +125,6 @@ function Format-LispPath {
     (Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path -replace '\\', '/'
 }
 
-function New-ExprPath {
-    # Временный .lsp для передачи выражения — внутри проекта: папка проекта в
-    # доверенных путях AutoCAD (TRUSTEDPATHS), поэтому (load) не спрашивает
-    # подтверждения. См. Invoke-Lisp.
-    $dir = Join-Path $Script:Root 'reports\_bridge'
-    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-    Join-Path $dir ('{0}.lsp' -f ([guid]::NewGuid().ToString('N')))
-}
-
 function Invoke-Lisp {
     <#
         Отправляет выражение в AutoCAD и ждёт файл с результатом.
@@ -161,46 +152,49 @@ function Invoke-Lisp {
 
     if ($PrintLisp) { Write-Output $payload; return }
 
-    # ВАЖНО: длинное выражение нельзя отправлять в командную строку целиком.
-    # Командная строка (~500 символов) рвёт его, хвост выполняется как отдельные
-    # команды — так однажды открылся диалог LCM из обрывка выражения.
-    # Поэтому текст уходит файлом в кодировке AutoCAD, а в командную строку —
-    # только короткое (load "файл").
-    $exprFile = New-ExprPath
-    [IO.File]::WriteAllText($exprFile, $payload, $Script:Cp1251)
-    $exprLisp = $exprFile -replace '\\', '/'
-
+    # Длинное выражение нельзя отправлять в командную строку целиком: около
+    # ~500 символов она рвёт его, и хвост выполняется как отдельные команды
+    # (11.11.2026 так открылся диалог LCM из обрывка). Файлы не используем —
+    # AutoCAD спрашивает подтверждение про каждый неподписанный файл.
+    # Поэтому текст собирается в переменную короткими кусками, а затем
+    # выполняется через (eval (read __s)).
     Assert-Idle
     $doc = Get-AcadDoc
-    # Файл лежит в reports\_bridge, то есть внутри доверенной папки проекта:
-    # (load) не вызывает диалог безопасности, SECURELOAD не трогаем.
-    Invoke-ComRetry { $doc.SendCommand("(load `"$exprLisp`") ") }
+
+    if ($payload.Length -le 380) {
+        Invoke-ComRetry { $doc.SendCommand(($payload.Trim() + ' ')) }
+    }
+    else {
+        $chunk = 300
+        Invoke-ComRetry { $doc.SendCommand('(setq __s "") ') }
+        for ($pos = 0; $pos -lt $payload.Length; $pos += $chunk) {
+            $size = [Math]::Min($chunk, $payload.Length - $pos)
+            $escaped = $payload.Substring($pos, $size).Replace('\', '\\').Replace('"', '\"')
+            Invoke-ComRetry { $doc.SendCommand("(setq __s (strcat __s `"$escaped`")) ") }
+        }
+        Invoke-ComRetry { $doc.SendCommand('(eval (read __s)) ') }
+    }
 
     $text = $null
-    try {
-        $deadline = (Get-Date).AddSeconds($Timeout)
-        while (-not (Test-Path $result)) {
-            if ((Get-Date) -gt $deadline) {
-                throw "AutoCAD не ответил за $Timeout с. Вероятно, команда ждёт ввода или открыт диалог."
-            }
-            Start-Sleep -Milliseconds 120
+    $deadline = (Get-Date).AddSeconds($Timeout)
+    while (-not (Test-Path $result)) {
+        if ((Get-Date) -gt $deadline) {
+            throw "AutoCAD не ответил за $Timeout с. Вероятно, команда ждёт ввода или открыт диалог."
         }
-
-        # Файл только что создан AutoCAD — он может быть ещё открыт на запись.
-        $readDeadline = (Get-Date).AddSeconds(5)
-        while ($true) {
-            try {
-                $text = [IO.File]::ReadAllText($result, $Script:Cp1251)
-                break
-            }
-            catch [System.IO.IOException] {
-                if ((Get-Date) -gt $readDeadline) { throw }
-                Start-Sleep -Milliseconds 50
-            }
-        }
+        Start-Sleep -Milliseconds 120
     }
-    finally {
-        Remove-Item -LiteralPath $exprFile -Force -ErrorAction SilentlyContinue
+
+    # Файл только что создан AutoCAD — он может быть ещё открыт на запись.
+    $readDeadline = (Get-Date).AddSeconds(5)
+    while ($true) {
+        try {
+            $text = [IO.File]::ReadAllText($result, $Script:Cp1251)
+            break
+        }
+        catch [System.IO.IOException] {
+            if ((Get-Date) -gt $readDeadline) { throw }
+            Start-Sleep -Milliseconds 50
+        }
     }
     Remove-Item -LiteralPath $result -Force -ErrorAction SilentlyContinue
 
