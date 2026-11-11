@@ -125,6 +125,13 @@ function Format-LispPath {
     (Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path -replace '\\', '/'
 }
 
+function New-ExprPath {
+    # Временный .lsp для передачи длинного выражения — см. Invoke-Lisp.
+    $dir = Join-Path $env:TEMP 'lcm_bridge'
+    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    Join-Path $dir ('{0}.lsp' -f ([guid]::NewGuid().ToString('N')))
+}
+
 function Invoke-Lisp {
     <#
         Отправляет выражение в AutoCAD и ждёт файл с результатом.
@@ -152,29 +159,44 @@ function Invoke-Lisp {
 
     if ($PrintLisp) { Write-Output $payload; return }
 
+    # ВАЖНО: длинное выражение нельзя отправлять в командную строку целиком.
+    # Командная строка (~500 символов) рвёт его, хвост выполняется как отдельные
+    # команды — так однажды открылся диалог LCM из обрывка выражения.
+    # Поэтому текст уходит файлом в кодировке AutoCAD, а в командную строку —
+    # только короткое (load "файл").
+    $exprFile = New-ExprPath
+    [IO.File]::WriteAllText($exprFile, $payload, $Script:Cp1251)
+    $exprLisp = $exprFile -replace '\\', '/'
+
     Assert-Idle
     $doc = Get-AcadDoc
-    Invoke-ComRetry { $doc.SendCommand(($payload.Trim() + ' ')) }
+    Invoke-ComRetry { $doc.SendCommand("(load `"$exprLisp`") ") }
 
-    $deadline = (Get-Date).AddSeconds($Timeout)
-    while (-not (Test-Path $result)) {
-        if ((Get-Date) -gt $deadline) {
-            throw "AutoCAD не ответил за $Timeout с. Вероятно, команда ждёт ввода или открыт диалог."
+    $text = $null
+    try {
+        $deadline = (Get-Date).AddSeconds($Timeout)
+        while (-not (Test-Path $result)) {
+            if ((Get-Date) -gt $deadline) {
+                throw "AutoCAD не ответил за $Timeout с. Вероятно, команда ждёт ввода или открыт диалог."
+            }
+            Start-Sleep -Milliseconds 120
         }
-        Start-Sleep -Milliseconds 120
+
+        # Файл только что создан AutoCAD — он может быть ещё открыт на запись.
+        $readDeadline = (Get-Date).AddSeconds(5)
+        while ($true) {
+            try {
+                $text = [IO.File]::ReadAllText($result, $Script:Cp1251)
+                break
+            }
+            catch [System.IO.IOException] {
+                if ((Get-Date) -gt $readDeadline) { throw }
+                Start-Sleep -Milliseconds 50
+            }
+        }
     }
-
-    # Файл только что создан AutoCAD — он может быть ещё открыт на запись.
-    $readDeadline = (Get-Date).AddSeconds(5)
-    while ($true) {
-        try {
-            $text = [IO.File]::ReadAllText($result, $Script:Cp1251)
-            break
-        }
-        catch [System.IO.IOException] {
-            if ((Get-Date) -gt $readDeadline) { throw }
-            Start-Sleep -Milliseconds 50
-        }
+    finally {
+        Remove-Item -LiteralPath $exprFile -Force -ErrorAction SilentlyContinue
     }
     Remove-Item -LiteralPath $result -Force -ErrorAction SilentlyContinue
 
