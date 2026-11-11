@@ -614,7 +614,7 @@ def phase_xlsx(args) -> int:
         ' (repeat 4 (write-line (strcat (itoa r) ";" (itoa c) ";"'
         " (vla-GetText o r c)) f) (setq c (1+ c)))"
         "(setq r (1+ r)))"
-        '(close f) (list r "ok"))'
+        '(close f) (list r "ok")'
     )
     code, out = eval_lisp(expression)
     if code != 0 or "ok" not in out:

@@ -152,6 +152,28 @@ function Invoke-Lisp {
 
     if ($PrintLisp) { Write-Output $payload; return }
 
+    # Страховка: несбалансированные скобки нельзя отправлять — при сборке из
+    # кусков выражение прочитается не целиком, ответ не придёт, вызов
+    # провисит таймаут (так было 11.11.2026 с лишней скобкой в выгрузке ячеек).
+    $depth = 0
+    $inString = $false
+    $escapedChar = $false
+    foreach ($ch in $payload.ToCharArray()) {
+        if ($inString) {
+            if ($escapedChar) { $escapedChar = $false }
+            elseif ($ch -eq '\') { $escapedChar = $true }
+            elseif ($ch -eq '"') { $inString = $false }
+        }
+        else {
+            if ($ch -eq '"') { $inString = $true }
+            elseif ($ch -eq '(') { $depth++ }
+            elseif ($ch -eq ')') { $depth-- }
+        }
+    }
+    if ($depth -ne 0 -or $inString) {
+        throw "LISP-выражение несбалансировано (скобки: $depth, строка не закрыта: $inString). Исправьте выражение."
+    }
+
     # Длинное выражение нельзя отправлять в командную строку целиком: около
     # ~500 символов она рвёт его, и хвост выполняется как отдельные команды
     # (11.11.2026 так открылся диалог LCM из обрывка). Файлы не используем —
@@ -167,11 +189,15 @@ function Invoke-Lisp {
     else {
         $chunk = 300
         Invoke-ComRetry { $doc.SendCommand('(setq __s "") ') }
+        Start-Sleep -Milliseconds 40
         for ($pos = 0; $pos -lt $payload.Length; $pos += $chunk) {
             $size = [Math]::Min($chunk, $payload.Length - $pos)
             $escaped = $payload.Substring($pos, $size).Replace('\', '\\').Replace('"', '\"')
             Invoke-ComRetry { $doc.SendCommand("(setq __s (strcat __s `"$escaped`")) ") }
+            Start-Sleep -Milliseconds 40
         }
+        # Дать AutoCAD проглотить последний кусок до запуска собранного текста.
+        Start-Sleep -Milliseconds 80
         Invoke-ComRetry { $doc.SendCommand('(eval (read __s)) ') }
     }
 
